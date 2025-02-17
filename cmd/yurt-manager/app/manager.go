@@ -17,24 +17,26 @@ limitations under the License.
 package app
 
 import (
+	"flag"
 	"fmt"
 	"net/http"
 	"os"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/clientcmd"
 	cliflag "k8s.io/component-base/cli/flag"
 	"k8s.io/component-base/cli/globalflag"
 	"k8s.io/component-base/term"
 	"k8s.io/klog/v2"
-	"k8s.io/klog/v2/klogr"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
+	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/metrics"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	runtimewebhook "sigs.k8s.io/controller-runtime/pkg/webhook"
@@ -122,6 +124,13 @@ current state towards the desired state.`,
 	}
 
 	fs := cmd.Flags()
+
+	opts := zap.Options{
+		Development: true,
+	}
+	opts.BindFlags(flag.CommandLine)
+	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+
 	namedFlagSets := s.Flags(controller.KnownControllers(), controller.ControllersDisabledByDefault.List())
 	// verflag.AddFlags(namedFlagSets.FlagSet("global"))
 	globalflag.AddGlobalFlags(namedFlagSets.FlagSet("global"), cmd.Name())
@@ -154,17 +163,8 @@ func PrintFlags(flags *pflag.FlagSet) {
 
 // Run runs the KubeControllerManagerOptions.  This should never exit.
 func Run(c *config.CompletedConfig, stopCh <-chan struct{}) error {
-	ctrl.SetLogger(klogr.New())
 	ctx := ctrl.SetupSignalHandler()
 	cfg := ctrl.GetConfigOrDie()
-	if len(c.ComponentConfig.Generic.Kubeconfig) != 0 {
-		config, err := clientcmd.BuildConfigFromFlags("", c.ComponentConfig.Generic.Kubeconfig)
-		if err != nil {
-			klog.Infof("could not build rest config, %v", err)
-			return err
-		}
-		cfg = config
-	}
 	setRestConfig(cfg, c)
 
 	metricsServerOpts := metricsserver.Options{
@@ -175,6 +175,14 @@ func Run(c *config.CompletedConfig, stopCh <-chan struct{}) error {
 		metricsServerOpts.ExtraHandlers[path] = handler
 	}
 
+	trimManagedFields := func(obj interface{}) (interface{}, error) {
+		if accessor, err := meta.Accessor(obj); err == nil {
+			if accessor.GetManagedFields() != nil {
+				accessor.SetManagedFields(nil)
+			}
+		}
+		return obj, nil
+	}
 	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
 		Scheme:                     scheme,
 		Metrics:                    metricsServerOpts,
@@ -189,6 +197,9 @@ func Run(c *config.CompletedConfig, stopCh <-chan struct{}) error {
 			CertDir: util.GetCertDir(),
 		}),
 		Logger: setupLog,
+		Cache: cache.Options{
+			DefaultTransform: trimManagedFields,
+		},
 	})
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")

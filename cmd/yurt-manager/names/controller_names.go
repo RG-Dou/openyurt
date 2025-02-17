@@ -25,9 +25,7 @@ const (
 	ServiceTopologyEndpointSliceController = "service-topology-endpointslice-controller"
 	YurtAppSetController                   = "yurt-app-set-controller"
 	YurtAppDaemonController                = "yurt-app-daemon-controller"
-	YurtAppOverriderController             = "yurt-app-overrider-controller"
 	YurtStaticSetController                = "yurt-static-set-controller"
-	YurtCoordinatorCertController          = "yurt-coordinator-cert-controller"
 	DelegateLeaseController                = "delegate-lease-controller"
 	PodBindingController                   = "pod-binding-controller"
 	GatewayPickupController                = "gateway-pickup-controller"
@@ -37,6 +35,8 @@ const (
 	NodeLifeCycleController                = "node-life-cycle-controller"
 	NodeBucketController                   = "node-bucket-controller"
 	LoadBalancerSetController              = "load-balancer-set-controller"
+	HubLeaderController                    = "hubleader-controller"
+	HubLeaderConfigController              = "hubleaderconfig-controller"
 )
 
 func YurtManagerControllerAliases() map[string]string {
@@ -51,8 +51,6 @@ func YurtManagerControllerAliases() map[string]string {
 		"yurtappset":                    YurtAppSetController,
 		"yurtappdaemon":                 YurtAppDaemonController,
 		"yurtstaticset":                 YurtStaticSetController,
-		"yurtappoverrider":              YurtAppOverriderController,
-		"yurtcoordinatorcert":           YurtCoordinatorCertController,
 		"delegatelease":                 DelegateLeaseController,
 		"podbinding":                    PodBindingController,
 		"gatewaypickup":                 GatewayPickupController,
@@ -62,5 +60,7 @@ func YurtManagerControllerAliases() map[string]string {
 		"nodelifecycle":                 NodeLifeCycleController,
 		"nodebucket":                    NodeBucketController,
 		"loadbalancerset":               LoadBalancerSetController,
+		"hubleader":                     HubLeaderController,
+		"hubleaderconfig":               HubLeaderConfigController,
 	}
 }

@@ -24,9 +24,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/tools/leaderelection/resourcelock"
-	componentbaseconfig "k8s.io/component-base/config"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"github.com/openyurtio/openyurt/pkg/projectinfo"
 	"github.com/openyurtio/openyurt/pkg/yurthub/storage/disk"
@@ -64,17 +62,9 @@ func TestNewYurtHubOptions(t *testing.T) {
 		MinRequestTimeout:         time.Second * 1800,
 		CACertHashes:              make([]string, 0),
 		UnsafeSkipCAVerification:  true,
-		CoordinatorServerAddr:     fmt.Sprintf("https://%s:%s", util.DefaultYurtCoordinatorAPIServerSvcName, util.DefaultYurtCoordinatorAPIServerSvcPort),
-		CoordinatorStorageAddr:    fmt.Sprintf("https://%s:%s", util.DefaultYurtCoordinatorEtcdSvcName, util.DefaultYurtCoordinatorEtcdSvcPort),
-		CoordinatorStoragePrefix:  "/registry",
-		LeaderElection: componentbaseconfig.LeaderElectionConfiguration{
-			LeaderElect:       true,
-			LeaseDuration:     metav1.Duration{Duration: 15 * time.Second},
-			RenewDeadline:     metav1.Duration{Duration: 10 * time.Second},
-			RetryPeriod:       metav1.Duration{Duration: 2 * time.Second},
-			ResourceLock:      resourcelock.LeasesResourceLock,
-			ResourceName:      projectinfo.GetHubName(),
-			ResourceNamespace: "kube-system",
+		PoolScopeResources: []schema.GroupVersionResource{
+			{Group: "", Version: "v1", Resource: "services"},
+			{Group: "discovery.k8s.io", Version: "v1", Resource: "endpointslices"},
 		},
 	}
 

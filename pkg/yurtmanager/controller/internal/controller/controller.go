@@ -24,28 +24,30 @@ import (
 	"sync"
 	"time"
 
+	"github.com/go-logr/logr"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
-	"sigs.k8s.io/controller-runtime/pkg/handler"
-	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/source"
 )
 
 // Controller implements controller.Controller.
-type Controller struct {
+type Controller[request comparable] struct {
 	// Name is used to uniquely identify a Controller in tracing, logging and monitoring.  Name is required.
 	Name string
+
+	// RateLimiter is used to limit how frequently requests may be queued into the work queue.
+	RateLimiter workqueue.TypedRateLimiter[request]
 
 	// MakeQueue constructs the queue for this controller once the controller is ready to start.
 	// This exists because the standard Kubernetes workqueues start themselves immediately, which
 	// leads to goroutine leaks if something calls controller.New repeatedly.
-	MakeQueue func() workqueue.RateLimitingInterface
+	NewQueue func(controllerName string, rateLimiter workqueue.TypedRateLimiter[request]) workqueue.TypedRateLimitingInterface[request]
 
 	// Queue is an listeningQueue that listens for events from Informers and adds object keys to
 	// the Queue for processing
-	Queue workqueue.RateLimitingInterface
+	Queue workqueue.TypedRateLimitingInterface[request]
 
 	// mu is used to synchronize Controller setup
 	mu sync.Mutex
@@ -65,7 +67,13 @@ type Controller struct {
 	CacheSyncTimeout time.Duration
 
 	// startWatches maintains a list of sources, handlers, and predicates to start when the controller is started.
-	startWatches []watchDescription
+	startWatches []source.TypedSource[request]
+
+	// LogConstructor is used to construct a logger to then log messages to users during reconciliation,
+	// or for example when a watch is started.
+	// Note: LogConstructor has to be able to handle nil requests as we are also using it
+	// outside the context of a reconciliation.
+	LogConstructor func(request *request) logr.Logger
 
 	// RecoverPanic indicates whether the panic caused by reconcile should be recovered.
 	RecoverPanic *bool
@@ -74,31 +82,25 @@ type Controller struct {
 	LeaderElected *bool
 }
 
-// watchDescription contains all the information necessary to start a watch.
-type watchDescription struct {
-	src        source.Source
-	handler    handler.EventHandler
-	predicates []predicate.Predicate
-}
-
 // Watch implements controller.Controller.
-func (c *Controller) Watch(src source.Source, evthdler handler.EventHandler, prct ...predicate.Predicate) error {
+func (c *Controller[request]) Watch(src source.TypedSource[request]) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
 	// Controller hasn't started yet, store the watches locally and return.
 	//
 	// These watches are going to be held on the controller struct until the manager or user calls Start(...).
 	if !c.Started {
-		c.startWatches = append(c.startWatches, watchDescription{src: src, handler: evthdler, predicates: prct})
+		c.startWatches = append(c.startWatches, src)
 		return nil
 	}
 
-	klog.V(2).InfoS("Starting EventSource", "source", src)
-	return src.Start(c.ctx, evthdler, c.Queue, prct...)
+	c.LogConstructor(nil).Info("Starting EventSource", "source", src)
+	return src.Start(c.ctx, c.Queue)
 }
 
 // NeedLeaderElection implements the manager.LeaderElectionRunnable interface.
-func (c *Controller) NeedLeaderElection() bool {
+func (c *Controller[request]) NeedLeaderElection() bool {
 	if c.LeaderElected == nil {
 		return true
 	}
@@ -106,7 +108,7 @@ func (c *Controller) NeedLeaderElection() bool {
 }
 
 // Start implements controller.Controller.
-func (c *Controller) Start(ctx context.Context) error {
+func (c *Controller[request]) Start(ctx context.Context) error {
 	// use an IIFE to get proper lock handling
 	// but lock outside to get proper handling of the queue shutdown
 	c.mu.Lock()
@@ -117,7 +119,7 @@ func (c *Controller) Start(ctx context.Context) error {
 	// Set the internal context.
 	c.ctx = ctx
 
-	c.Queue = c.MakeQueue()
+	c.Queue = c.NewQueue(c.Name, c.RateLimiter)
 	go func() {
 		<-ctx.Done()
 		c.Queue.ShutDown()
@@ -133,18 +135,18 @@ func (c *Controller) Start(ctx context.Context) error {
 		// caches to sync so that they have a chance to register their intendeded
 		// caches.
 		for _, watch := range c.startWatches {
-			klog.V(2).InfoS("Starting EventSource", "source", fmt.Sprintf("%s", watch.src), "controller", c.Name)
+			c.LogConstructor(nil).Info("Starting EventSource", "source", fmt.Sprintf("%s", watch))
 
-			if err := watch.src.Start(ctx, watch.handler, c.Queue, watch.predicates...); err != nil {
+			if err := watch.Start(ctx, c.Queue); err != nil {
 				return err
 			}
 		}
 
 		// Start the SharedIndexInformer factories to begin populating the SharedIndexInformer caches
-		klog.V(2).InfoS("Starting Controller WatchSource", "controller", c.Name)
+		c.LogConstructor(nil).Info("Starting Controller")
 
 		for _, watch := range c.startWatches {
-			syncingSource, ok := watch.src.(source.SyncingSource)
+			syncingSource, ok := watch.(source.TypedSyncingSource[request])
 			if !ok {
 				continue
 			}
@@ -187,7 +189,7 @@ func (c *Controller) Start(ctx context.Context) error {
 	return nil
 }
 
-func (c *Controller) WaitForStarted(ctx context.Context) bool {
+func (c *Controller[request]) WaitForStarted(ctx context.Context) bool {
 	err := wait.PollUntilContextCancel(ctx, 200*time.Millisecond, true, func(ctx context.Context) (bool, error) {
 		c.mu.Lock()
 		started := c.Started

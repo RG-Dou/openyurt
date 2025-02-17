@@ -25,8 +25,7 @@ import (
 	discovery "k8s.io/api/discovery/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/util/sets"
-	"k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
 
 	"github.com/openyurtio/openyurt/pkg/util"
 	"github.com/openyurtio/openyurt/pkg/yurthub/filter/base"
@@ -47,28 +46,10 @@ func TestName(t *testing.T) {
 	}
 }
 
-func TestSupportedResourceAndVerbs(t *testing.T) {
-	fkst, _ := NewForwardKubeSVCTrafficFilter()
-	rvs := fkst.SupportedResourceAndVerbs()
-	if len(rvs) != 1 {
-		t.Errorf("supported more than one resources, %v", rvs)
-	}
-
-	for resource, verbs := range rvs {
-		if resource != "endpointslices" {
-			t.Errorf("expect resource is endpointslices, but got %s", resource)
-		}
-
-		if !verbs.Equal(sets.New("list", "watch")) {
-			t.Errorf("expect verbs are list/watch, but got %v", verbs.UnsortedList())
-		}
-	}
-}
-
 func TestFilter(t *testing.T) {
 	portName := "https"
 
-	readyCondition := pointer.Bool(true)
+	readyCondition := ptr.To(true)
 	var kasPort, masterPort int32
 	kasPort = 6443
 	masterHost := "169.251.2.1"

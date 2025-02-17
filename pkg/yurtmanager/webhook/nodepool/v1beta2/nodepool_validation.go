@@ -1,0 +1,194 @@
+/*
+Copyright 2025 The OpenYurt Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+	http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package v1beta2
+
+import (
+	"context"
+	"errors"
+	"fmt"
+
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	apivalidation "k8s.io/apimachinery/pkg/api/validation"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/validation/field"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
+
+	appsv1beta2 "github.com/openyurtio/openyurt/pkg/apis/apps/v1beta2"
+	"github.com/openyurtio/openyurt/pkg/projectinfo"
+)
+
+// ValidateCreate implements webhook.CustomValidator so a webhook will be registered for the type.
+func (webhook *NodePoolHandler) ValidateCreate(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {
+	np, ok := obj.(*appsv1beta2.NodePool)
+	if !ok {
+		return nil, apierrors.NewBadRequest(fmt.Sprintf("expected a NodePool but got a %T", obj))
+	}
+
+	if allErrs := validateNodePoolSpec(&np.Spec); len(allErrs) > 0 {
+		return nil, apierrors.NewInvalid(appsv1beta2.GroupVersion.WithKind("NodePool").GroupKind(), np.Name, allErrs)
+	}
+
+	return nil, nil
+}
+
+// ValidateUpdate implements webhook.CustomValidator so a webhook will be registered for the type.
+func (webhook *NodePoolHandler) ValidateUpdate(
+	ctx context.Context,
+	oldObj, newObj runtime.Object,
+) (admission.Warnings, error) {
+	newNp, ok := newObj.(*appsv1beta2.NodePool)
+	if !ok {
+		return nil, apierrors.NewBadRequest(fmt.Sprintf("expected a NodePool but got a %T", newObj))
+	}
+	oldNp, ok := oldObj.(*appsv1beta2.NodePool)
+	if !ok {
+		return nil, apierrors.NewBadRequest(fmt.Sprintf("expected a NodePool but got a %T", oldObj))
+	}
+
+	if allErrs := validateNodePoolSpecUpdate(&newNp.Spec, &oldNp.Spec); len(allErrs) > 0 {
+		return nil, apierrors.NewForbidden(
+			appsv1beta2.GroupVersion.WithResource("nodepools").GroupResource(),
+			newNp.Name,
+			allErrs[0],
+		)
+	}
+
+	return nil, nil
+}
+
+// ValidateDelete implements webhook.CustomValidator so a webhook will be registered for the type.
+func (webhook *NodePoolHandler) ValidateDelete(_ context.Context, obj runtime.Object) (admission.Warnings, error) {
+	np, ok := obj.(*appsv1beta2.NodePool)
+	if !ok {
+		return nil, apierrors.NewBadRequest(fmt.Sprintf("expected a NodePool but got a %T", obj))
+	}
+	if allErrs := validateNodePoolDeletion(webhook.Client, np); len(allErrs) > 0 {
+		return nil, apierrors.NewForbidden(
+			appsv1beta2.GroupVersion.WithResource("nodepools").GroupResource(),
+			np.Name,
+			allErrs[0],
+		)
+	}
+
+	return nil, nil
+}
+
+// annotationValidator validates the NodePool.Spec.Annotations
+var annotationValidator = func(annos map[string]string) error {
+	errs := apivalidation.ValidateAnnotations(annos, field.NewPath("field"))
+	if len(errs) > 0 {
+		return errors.New(errs.ToAggregate().Error())
+	}
+	return nil
+}
+
+func validateNodePoolSpecAnnotations(annotations map[string]string) field.ErrorList {
+	if err := annotationValidator(annotations); err != nil {
+		return field.ErrorList([]*field.Error{
+			field.Invalid(field.NewPath("spec").Child("annotations"),
+				annotations, "invalid annotations")})
+	}
+	return nil
+}
+
+// validateNodePoolSpec validates the nodepool spec.
+func validateNodePoolSpec(spec *appsv1beta2.NodePoolSpec) field.ErrorList {
+	if allErrs := validateNodePoolSpecAnnotations(spec.Annotations); allErrs != nil {
+		return allErrs
+	}
+
+	// NodePool type should be Edge or Cloud
+	if spec.Type != appsv1beta2.Edge && spec.Type != appsv1beta2.Cloud {
+		return []*field.Error{
+			field.Invalid(field.NewPath("spec").Child("type"), spec.Type, "pool type should be Edge or Cloud"),
+		}
+	}
+
+	// Cloud NodePool can not set HostNetwork=true
+	if spec.Type == appsv1beta2.Cloud && spec.HostNetwork {
+		return []*field.Error{
+			field.Invalid(
+				field.NewPath("spec").Child("hostNetwork"),
+				spec.HostNetwork,
+				"Cloud NodePool cloud not support hostNetwork",
+			),
+		}
+	}
+
+	// Check leader election strategy has been set to Random or Mark
+	switch spec.LeaderElectionStrategy {
+	case string(appsv1beta2.ElectionStrategyRandom), string(appsv1beta2.ElectionStrategyMark):
+		return nil
+	default:
+		return []*field.Error{
+			field.Invalid(
+				field.NewPath("spec").Child("leaderElectionStrategy"),
+				spec.LeaderElectionStrategy,
+				"leaderElectionStrategy should be Random or Mark",
+			),
+		}
+	}
+}
+
+// validateNodePoolSpecUpdate tests if required fields in the NodePool spec are set.
+func validateNodePoolSpecUpdate(spec, oldSpec *appsv1beta2.NodePoolSpec) field.ErrorList {
+	if allErrs := validateNodePoolSpec(spec); allErrs != nil {
+		return allErrs
+	}
+
+	if spec.Type != oldSpec.Type {
+		return field.ErrorList([]*field.Error{
+			field.Forbidden(field.NewPath("spec").Child("type"), "pool type can't be changed")})
+	}
+
+	if spec.HostNetwork != oldSpec.HostNetwork {
+		return field.ErrorList([]*field.Error{
+			field.Forbidden(field.NewPath("spec").Child("hostNetwork"), "pool hostNetwork can't be changed"),
+		})
+	}
+
+	if spec.InterConnectivity != oldSpec.InterConnectivity {
+		return field.ErrorList([]*field.Error{
+			field.Forbidden(
+				field.NewPath("spec").Child("interConnectivity"),
+				"pool interConnectivity can't be changed",
+			),
+		})
+	}
+
+	return nil
+}
+
+// validateNodePoolDeletion validate the nodepool deletion event, which prevents
+// the default-nodepool from being deleted
+func validateNodePoolDeletion(cli client.Client, np *appsv1beta2.NodePool) field.ErrorList {
+	nodes := corev1.NodeList{}
+
+	if err := cli.List(context.TODO(), &nodes, client.MatchingLabels(map[string]string{projectinfo.GetNodePoolLabel(): np.Name})); err != nil {
+		return field.ErrorList([]*field.Error{
+			field.Forbidden(field.NewPath("metadata").Child("name"),
+				"could not get nodes associated to the pool")})
+	}
+	if len(nodes.Items) != 0 {
+		return field.ErrorList([]*field.Error{
+			field.Forbidden(field.NewPath("metadata").Child("name"),
+				"cannot remove nonempty pool, please drain the pool before deleting")})
+	}
+	return nil
+}

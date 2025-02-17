@@ -106,13 +106,13 @@ func add(mgr manager.Manager, cfg *appconfig.CompletedConfig, r reconcile.Reconc
 	}
 
 	// Watch for changes to Gateway
-	err = c.Watch(source.Kind(mgr.GetCache(), &ravenv1beta1.Gateway{}), &EnqueueRequestForGatewayEvent{})
+	err = c.Watch(source.Kind[client.Object](mgr.GetCache(), &ravenv1beta1.Gateway{}, &EnqueueRequestForGatewayEvent{}))
 	if err != nil {
 		return err
 	}
 
 	//Watch for changes to raven agent
-	err = c.Watch(source.Kind(mgr.GetCache(), &corev1.ConfigMap{}), &EnqueueRequestForConfigEvent{client: yurtClient.GetClientByControllerNameOrDie(mgr, names.GatewayPublicServiceController)}, predicate.NewPredicateFuncs(
+	err = c.Watch(source.Kind[client.Object](mgr.GetCache(), &corev1.ConfigMap{}, &EnqueueRequestForConfigEvent{client: yurtClient.GetClientByControllerNameOrDie(mgr, names.GatewayPublicServiceController)}, predicate.NewPredicateFuncs(
 		func(object client.Object) bool {
 			cm, ok := object.(*corev1.ConfigMap)
 			if !ok {
@@ -126,7 +126,7 @@ func add(mgr manager.Manager, cfg *appconfig.CompletedConfig, r reconcile.Reconc
 			}
 			return true
 		},
-	))
+	)))
 	if err != nil {
 		return err
 	}
@@ -155,13 +155,13 @@ func (r *ReconcileService) Reconcile(ctx context.Context, req reconcile.Request)
 	}
 	svcRecord := newServiceRecord()
 	if err := r.reconcileService(ctx, gw.DeepCopy(), svcRecord, enableTunnel, enableProxy); err != nil {
-		err = fmt.Errorf(Format("unable to reconcile service: %s", err))
+		err = fmt.Errorf("unable to reconcile service: %s", err)
 		klog.Error(err.Error())
 		return reconcile.Result{Requeue: true, RequeueAfter: 2 * time.Second}, err
 	}
 
 	if err := r.reconcileEndpoints(ctx, gw.DeepCopy(), svcRecord, enableTunnel, enableProxy); err != nil {
-		err = fmt.Errorf(Format("unable to reconcile endpoint: %s", err))
+		err = fmt.Errorf("unable to reconcile endpoint: %s", err)
 		klog.Error(err.Error())
 		return reconcile.Result{Requeue: true, RequeueAfter: 2 * time.Second}, err
 	}
@@ -186,7 +186,6 @@ func recordServiceNames(services []corev1.Service, record *serviceRecord) {
 		}
 		record.write(formatKey(epName, epType), svc.GetName())
 	}
-	return
 }
 
 func (r *ReconcileService) reconcileService(ctx context.Context, gw *ravenv1beta1.Gateway, record *serviceRecord, enableTunnel, enableProxy bool) error {
@@ -461,7 +460,7 @@ func (r *ReconcileService) getEndpointsAddress(ctx context.Context, name string)
 	var node corev1.Node
 	err := r.Get(ctx, types.NamespacedName{Name: name}, &node)
 	if err != nil {
-		klog.Errorf(Format("could not get node %s for get active endpoints address, error %s", name, err.Error()))
+		klog.Error(Format("could not get node %s for get active endpoints address, error %s", name, err.Error()))
 		return nil, err
 	}
 	return &corev1.EndpointAddress{NodeName: func(n corev1.Node) *string { return &n.Name }(node), IP: util.GetNodeInternalIP(node)}, nil

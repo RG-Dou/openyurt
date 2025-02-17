@@ -37,7 +37,6 @@ import (
 	yurtutil "github.com/openyurtio/openyurt/pkg/util"
 	manager "github.com/openyurtio/openyurt/pkg/yurthub/cachemanager"
 	hubmeta "github.com/openyurtio/openyurt/pkg/yurthub/kubernetes/meta"
-	"github.com/openyurtio/openyurt/pkg/yurthub/proxy/util"
 	"github.com/openyurtio/openyurt/pkg/yurthub/storage"
 	hubutil "github.com/openyurtio/openyurt/pkg/yurthub/util"
 )
@@ -51,19 +50,17 @@ type IsHealthy func() bool
 
 // LocalProxy is responsible for handling requests when remote servers are unhealthy
 type LocalProxy struct {
-	cacheMgr           manager.CacheManager
-	isCloudHealthy     IsHealthy
-	isCoordinatorReady IsHealthy
-	minRequestTimeout  time.Duration
+	cacheMgr          manager.CacheManager
+	isCloudHealthy    IsHealthy
+	minRequestTimeout time.Duration
 }
 
 // NewLocalProxy creates a *LocalProxy
-func NewLocalProxy(cacheMgr manager.CacheManager, isCloudHealthy IsHealthy, isCoordinatorHealthy IsHealthy, minRequestTimeout time.Duration) *LocalProxy {
+func NewLocalProxy(cacheMgr manager.CacheManager, isCloudHealthy IsHealthy, minRequestTimeout time.Duration) *LocalProxy {
 	return &LocalProxy{
-		cacheMgr:           cacheMgr,
-		isCloudHealthy:     isCloudHealthy,
-		isCoordinatorReady: isCoordinatorHealthy,
-		minRequestTimeout:  minRequestTimeout,
+		cacheMgr:          cacheMgr,
+		isCloudHealthy:    isCloudHealthy,
+		minRequestTimeout: minRequestTimeout,
 	}
 }
 
@@ -86,11 +83,11 @@ func (lp *LocalProxy) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 		if err != nil {
 			klog.Errorf("could not proxy local for %s, %v", hubutil.ReqString(req), err)
-			util.Err(err, w, req)
+			hubutil.Err(err, w, req)
 		}
 	} else {
 		klog.Errorf("local proxy does not support request(%s), requestInfo: %s", hubutil.ReqString(req), hubutil.ReqInfoString(reqInfo))
-		util.Err(apierrors.NewBadRequest(fmt.Sprintf("local proxy does not support request(%s)", hubutil.ReqString(req))), w, req)
+		hubutil.Err(apierrors.NewBadRequest(fmt.Sprintf("local proxy does not support request(%s)", hubutil.ReqString(req))), w, req)
 	}
 }
 
@@ -110,8 +107,7 @@ func localDelete(w http.ResponseWriter, req *http.Request) error {
 		Message: "delete request is not supported in local cache",
 	}
 
-	util.WriteObject(http.StatusForbidden, s, w, req)
-	return nil
+	return hubutil.WriteObject(http.StatusForbidden, s, w, req)
 }
 
 // localPost handles Create requests when remote servers are unhealthy
@@ -185,7 +181,6 @@ func (lp *LocalProxy) localWatch(w http.ResponseWriter, req *http.Request) error
 		timeout = time.Duration(float64(lp.minRequestTimeout) * (rand.Float64() + 1.0))
 	}
 
-	isPoolScopedListWatch := util.IsPoolScopedResourceListWatchRequest(req)
 	watchTimer := time.NewTimer(timeout)
 	intervalTicker := time.NewTicker(interval)
 	defer watchTimer.Stop()
@@ -201,11 +196,6 @@ func (lp *LocalProxy) localWatch(w http.ResponseWriter, req *http.Request) error
 		case <-intervalTicker.C:
 			// if cluster becomes healthy, exit the watch wait
 			if lp.isCloudHealthy() {
-				return nil
-			}
-
-			// if yurtcoordinator becomes healthy, exit the watch wait
-			if isPoolScopedListWatch && lp.isCoordinatorReady() {
 				return nil
 			}
 		}
@@ -232,7 +222,7 @@ func (lp *LocalProxy) localReqCache(w http.ResponseWriter, req *http.Request) er
 		return apierrors.NewInternalError(fmt.Errorf("no cache object for %s", hubutil.ReqString(req)))
 	}
 
-	return util.WriteObject(http.StatusOK, obj, w, req)
+	return hubutil.WriteObject(http.StatusOK, obj, w, req)
 }
 
 func copyHeader(dst, src http.Header) {

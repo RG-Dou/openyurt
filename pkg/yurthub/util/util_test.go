@@ -74,19 +74,6 @@ func TestContext(t *testing.T) {
 		return
 	}
 
-	reqCanCacheFrom, ok := ReqCanCacheFrom(ctx)
-	if ok {
-		t.Errorf("want clean context, got value %v, ok:%v", reqCanCacheFrom, ok)
-		return
-	}
-	testReqCanCacheFrom := true
-	ctxWithReqCanCache := WithReqCanCache(ctx, testReqCanCacheFrom)
-	reqCanCacheFrom, ok = ReqCanCacheFrom(ctxWithReqCanCache)
-	if !ok || reqCanCacheFrom != testReqCanCacheFrom {
-		t.Errorf("reqCanCacheFrom, got value %v, ok:%v", reqCanCacheFrom, ok)
-		return
-	}
-
 	listSelectorFrom, ok := ListSelectorFrom(ctx)
 	if ok || listSelectorFrom != "" {
 		t.Errorf("want clean context, got value %v, ok:%v", listSelectorFrom, ok)
@@ -280,6 +267,7 @@ func TestIsSupportedWorkingMode(t *testing.T) {
 	}{
 		{"working mode cloud", args{WorkingModeCloud}, true},
 		{"working mode edge", args{WorkingModeEdge}, true},
+		{"working mode local", args{WorkingModeLocal}, true},
 		{"no working mode", args{}, false},
 	}
 	for _, tt := range tests {

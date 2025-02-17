@@ -2,19 +2,18 @@
 
 ![](docs/img/OpenYurt.png)
 
-[![Version](https://img.shields.io/badge/OpenYurt-v1.5.0-orange)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/OpenYurt-v1.6.0-orange)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-Apache%202-4EB1BA.svg)](https://www.apache.org/licenses/LICENSE-2.0.html)
 [![Go Report Card](https://goreportcard.com/badge/github.com/openyurtio/openyurt)](https://goreportcard.com/report/github.com/openyurtio/openyurt)
 [![codecov](https://codecov.io/gh/openyurtio/openyurt/branch/master/graph/badge.svg)](https://codecov.io/gh/openyurtio/openyurt)
-[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/openyurtio/openyurt/badge)](https://api.securityscorecards.dev/projects/github.com/openyurtio/openyurt)
-[![CII Best Practices](https://bestpractices.coreinfrastructure.org/projects/7117/badge)](https://bestpractices.coreinfrastructure.org/projects/7117)
+[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/7117/badge)](https://www.bestpractices.dev/projects/7117)
 [![](https://img.shields.io/badge/OpenYurt-%E6%9F%A5%E7%9C%8B%E8%B4%A1%E7%8C%AE%E6%8E%92%E8%A1%8C%E6%A6%9C-orange)](https://opensource.alibaba.com/contribution_leaderboard/details?projectValue=openyurt)
 
 [English](./README.md) | 简体中文
 
 | ![notification](docs/img/bell-outline-badge.svg) What is NEW!            |
 |--------------------------------------------------------------------------|
-| 最新发布：2024-07-16 OpenYurt v1.5.0 请查看 [CHANGELOG](CHANGELOG.md) 来获得更多更新细节. |
+| 最新发布：2025-01-07 OpenYurt v1.6.0 请查看 [CHANGELOG](CHANGELOG.md) 来获得更多更新细节. |
 | 第一个发布：2020-05-29 OpenYurt v0.1.0-beta.1                                  |
 
 OpenYurt (官网: https://openyurt.io) 是基于 Upstream Kubernetes 构建的，现在是托管在云原生基金会(CNCF) 下的 [沙箱项目](https://www.cncf.io/sandbox-projects/).
@@ -50,7 +49,7 @@ OpenYurt 遵循经典的云边一体化架构。
 
 ## 开始使用
 
-OpenYurt 目前已经确认支持至 Kubernetes v1.28 版本。预计对 Kubernetes 的后续版本同样具备兼容性，但尚待验证。
+OpenYurt 目前已经确认支持至 Kubernetes v1.30 版本。预计对 Kubernetes 的后续版本同样具备兼容性，但尚待验证。
 
 OpenYurt 集群安装分成 2 个部分，分别为安装 OpenYurt 管控组件和节点接入。
 

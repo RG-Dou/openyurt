@@ -44,18 +44,15 @@ var (
 )
 
 type HubMetrics struct {
-	serversHealthyCollector               *prometheus.GaugeVec
-	inFlightRequestsCollector             *prometheus.GaugeVec
-	inFlightRequestsGauge                 prometheus.Gauge
-	rejectedRequestsCounter               prometheus.Counter
-	closableConnsCollector                *prometheus.GaugeVec
-	proxyTrafficCollector                 *prometheus.CounterVec
-	proxyLatencyCollector                 *prometheus.GaugeVec
-	yurtCoordinatorYurthubRoleCollector   *prometheus.GaugeVec
-	yurtCoordinatorHealthyStatusCollector *prometheus.GaugeVec
-	yurtCoordinatorReadyStatusCollector   *prometheus.GaugeVec
-	errorKeysPersistencyStatusCollector   prometheus.Gauge
-	errorKeysCountCollector               prometheus.Gauge
+	serversHealthyCollector              *prometheus.GaugeVec
+	inFlightRequestsCollector            *prometheus.GaugeVec
+	inFlightRequestsGauge                prometheus.Gauge
+	inFlightMultiplexerRequestsCollector *prometheus.GaugeVec
+	inFlightMultiplexerRequestsGauge     prometheus.Gauge
+	closableConnsCollector               *prometheus.GaugeVec
+	proxyTrafficCollector                *prometheus.CounterVec
+	errorKeysPersistencyStatusCollector  prometheus.Gauge
+	errorKeysCountCollector              prometheus.Gauge
 }
 
 func newHubMetrics() *HubMetrics {
@@ -82,12 +79,20 @@ func newHubMetrics() *HubMetrics {
 			Name:      "in_flight_requests_total",
 			Help:      "total of in flight requests handling by hub agent",
 		})
-	rejectedRequestsCounter := prometheus.NewCounter(
-		prometheus.CounterOpts{
+	inFlightMultiplexerRequestsCollector := prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
 			Namespace: namespace,
 			Subsystem: subsystem,
-			Name:      "rejected_requests_counter",
-			Help:      "counter of rejected requests for exceeding in flight limit in hub agent",
+			Name:      "in_flight_multiplexer_requests_collector",
+			Help:      "collector of in flight requests handling by multiplexer manager",
+		},
+		[]string{"verb", "resource", "subresources", "client"})
+	inFlightMultiplexerRequestsGauge := prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: namespace,
+			Subsystem: subsystem,
+			Name:      "in_flight_multiplexer_requests_total",
+			Help:      "total of in flight requests handling by multiplexer manager",
 		})
 	closableConnsCollector := prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
@@ -105,38 +110,6 @@ func newHubMetrics() *HubMetrics {
 			Help:      "collector of proxy response traffic by hub agent(unit: byte)",
 		},
 		[]string{"client", "verb", "resource", "subresources"})
-	proxyLatencyCollector := prometheus.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Namespace: namespace,
-			Subsystem: subsystem,
-			Name:      "proxy_latency_collector",
-			Help:      "collector of proxy latency of incoming requests(unit: ms)",
-		},
-		[]string{"client", "verb", "resource", "subresources", "type"})
-	yurtCoordinatorYurthubRoleCollector := prometheus.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Namespace: namespace,
-			Subsystem: subsystem,
-			Name:      "yurt_coordinator_yurthub_role",
-			Help:      "yurt coordinator status of yurthub. 1: LeaderHub, 2: FollowerHub 3: Pending",
-		},
-		[]string{})
-	yurtCoordinatorHealthyStatusCollector := prometheus.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Namespace: namespace,
-			Subsystem: subsystem,
-			Name:      "yurt_coordinator_healthy_status",
-			Help:      "yurt coordinator heahty status 1: healthy, 0: unhealthy",
-		},
-		[]string{})
-	yurtCoordinatorReadyStatusCollector := prometheus.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Namespace: namespace,
-			Subsystem: subsystem,
-			Name:      "yurt_coordinator_ready_status",
-			Help:      "yurt coordinator ready status 1: ready, 0: notReady",
-		},
-		[]string{})
 	errorKeysPersistencyStatusCollector := prometheus.NewGauge(
 		prometheus.GaugeOpts{
 			Namespace: namespace,
@@ -154,28 +127,22 @@ func newHubMetrics() *HubMetrics {
 	prometheus.MustRegister(serversHealthyCollector)
 	prometheus.MustRegister(inFlightRequestsCollector)
 	prometheus.MustRegister(inFlightRequestsGauge)
-	prometheus.MustRegister(rejectedRequestsCounter)
+	prometheus.MustRegister(inFlightMultiplexerRequestsCollector)
+	prometheus.MustRegister(inFlightMultiplexerRequestsGauge)
 	prometheus.MustRegister(closableConnsCollector)
 	prometheus.MustRegister(proxyTrafficCollector)
-	prometheus.MustRegister(proxyLatencyCollector)
-	prometheus.MustRegister(yurtCoordinatorYurthubRoleCollector)
-	prometheus.MustRegister(yurtCoordinatorHealthyStatusCollector)
-	prometheus.MustRegister(yurtCoordinatorReadyStatusCollector)
 	prometheus.MustRegister(errorKeysPersistencyStatusCollector)
 	prometheus.MustRegister(errorKeysCountCollector)
 	return &HubMetrics{
-		serversHealthyCollector:               serversHealthyCollector,
-		inFlightRequestsCollector:             inFlightRequestsCollector,
-		inFlightRequestsGauge:                 inFlightRequestsGauge,
-		rejectedRequestsCounter:               rejectedRequestsCounter,
-		closableConnsCollector:                closableConnsCollector,
-		proxyTrafficCollector:                 proxyTrafficCollector,
-		proxyLatencyCollector:                 proxyLatencyCollector,
-		yurtCoordinatorHealthyStatusCollector: yurtCoordinatorHealthyStatusCollector,
-		yurtCoordinatorReadyStatusCollector:   yurtCoordinatorReadyStatusCollector,
-		yurtCoordinatorYurthubRoleCollector:   yurtCoordinatorYurthubRoleCollector,
-		errorKeysPersistencyStatusCollector:   errorKeysPersistencyStatusCollector,
-		errorKeysCountCollector:               errorKeysCountCollector,
+		serversHealthyCollector:              serversHealthyCollector,
+		inFlightRequestsCollector:            inFlightRequestsCollector,
+		inFlightRequestsGauge:                inFlightRequestsGauge,
+		inFlightMultiplexerRequestsCollector: inFlightMultiplexerRequestsCollector,
+		inFlightMultiplexerRequestsGauge:     inFlightMultiplexerRequestsGauge,
+		closableConnsCollector:               closableConnsCollector,
+		proxyTrafficCollector:                proxyTrafficCollector,
+		errorKeysPersistencyStatusCollector:  errorKeysPersistencyStatusCollector,
+		errorKeysCountCollector:              errorKeysCountCollector,
 	}
 }
 
@@ -183,27 +150,16 @@ func (hm *HubMetrics) Reset() {
 	hm.serversHealthyCollector.Reset()
 	hm.inFlightRequestsCollector.Reset()
 	hm.inFlightRequestsGauge.Set(float64(0))
+	hm.inFlightMultiplexerRequestsCollector.Reset()
+	hm.inFlightMultiplexerRequestsGauge.Set(float64(0))
 	hm.closableConnsCollector.Reset()
 	hm.proxyTrafficCollector.Reset()
-	hm.proxyLatencyCollector.Reset()
 	hm.errorKeysPersistencyStatusCollector.Set(float64(0))
 	hm.errorKeysCountCollector.Set(float64(0))
 }
 
 func (hm *HubMetrics) ObserveServerHealthy(server string, status int) {
 	hm.serversHealthyCollector.WithLabelValues(server).Set(float64(status))
-}
-
-func (hm *HubMetrics) ObserveYurtCoordinatorYurthubRole(status int32) {
-	hm.yurtCoordinatorYurthubRoleCollector.WithLabelValues().Set(float64(status))
-}
-
-func (hm *HubMetrics) ObserveYurtCoordinatorReadyStatus(status int32) {
-	hm.yurtCoordinatorReadyStatusCollector.WithLabelValues().Set(float64(status))
-}
-
-func (hm *HubMetrics) ObserveYurtCoordinatorHealthyStatus(status int32) {
-	hm.yurtCoordinatorHealthyStatusCollector.WithLabelValues().Set(float64(status))
 }
 
 func (hm *HubMetrics) IncInFlightRequests(verb, resource, subresource, client string) {
@@ -216,8 +172,14 @@ func (hm *HubMetrics) DecInFlightRequests(verb, resource, subresource, client st
 	hm.inFlightRequestsGauge.Dec()
 }
 
-func (hm *HubMetrics) IncRejectedRequestCounter() {
-	hm.rejectedRequestsCounter.Inc()
+func (hm *HubMetrics) IncInFlightMultiplexerRequests(verb, resource, subresource, client string) {
+	hm.inFlightMultiplexerRequestsCollector.WithLabelValues(verb, resource, subresource, client).Inc()
+	hm.inFlightMultiplexerRequestsGauge.Inc()
+}
+
+func (hm *HubMetrics) DecInFlightMultiplexerRequests(verb, resource, subresource, client string) {
+	hm.inFlightMultiplexerRequestsCollector.WithLabelValues(verb, resource, subresource, client).Dec()
+	hm.inFlightMultiplexerRequestsGauge.Dec()
 }
 
 func (hm *HubMetrics) IncClosableConns(server string) {
@@ -236,10 +198,6 @@ func (hm *HubMetrics) AddProxyTrafficCollector(client, verb, resource, subresour
 	if size > 0 {
 		hm.proxyTrafficCollector.WithLabelValues(client, verb, resource, subresource).Add(float64(size))
 	}
-}
-
-func (hm *HubMetrics) SetProxyLatencyCollector(client, verb, resource, subresource string, latencyType LatencyType, duration int64) {
-	hm.proxyLatencyCollector.WithLabelValues(client, verb, resource, subresource, string(latencyType)).Set(float64(duration))
 }
 
 func (hm *HubMetrics) SetErrorKeysPersistencyStatus(status int) {

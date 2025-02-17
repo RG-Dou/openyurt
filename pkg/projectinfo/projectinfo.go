@@ -80,6 +80,14 @@ func GetHubName() string {
 	return projectPrefix + "hub"
 }
 
+func ShortHubVersion() string {
+	commit := gitCommit
+	if len(gitCommit) > 7 {
+		commit = gitCommit[:7]
+	}
+	return GetHubName() + "/" + gitVersion + "-" + commit
+}
+
 // GetEdgeEnableTunnelLabelKey returns the tunnel agent label ("openyurt.io/edge-enable-reverseTunnel-client"),
 // which is used to identify if tunnel agent is running on the node or not.
 func GetEdgeEnableTunnelLabelKey() string {
@@ -101,6 +109,11 @@ func GetAutonomyAnnotation() string {
 	return fmt.Sprintf("node.beta.%s/autonomy", labelPrefix)
 }
 
+// GetNodeAutonomyDurationAnnotation returns annotation key for node autonomy duration
+func GetNodeAutonomyDurationAnnotation() string {
+	return fmt.Sprintf("node.%s/autonomy-duration", labelPrefix)
+}
+
 // normalizeGitCommit reserve 7 characters for gitCommit
 func normalizeGitCommit(commit string) string {
 	if len(commit) > 7 {
@@ -113,6 +126,16 @@ func normalizeGitCommit(commit string) string {
 // GetNodePoolLabel returns label for specifying nodepool
 func GetNodePoolLabel() string {
 	return nodePoolLabelKey
+}
+
+// GetHubleaderConfigMapName returns the name of the leader ConfigMap for the nodepool
+func GetHubleaderConfigMapName(nodepoolName string) string {
+	return fmt.Sprintf("leader-hub-%s", nodepoolName)
+}
+
+// GetHubLeaderConfigMapLabel returns the label of the leader ConfigMap for the nodepool
+func GetHubLeaderConfigMapLabel() string {
+	return fmt.Sprintf("%s/configmap-name", labelPrefix)
 }
 
 // Info contains version information.

@@ -29,13 +29,14 @@ import (
 	apirequest "k8s.io/apiserver/pkg/endpoints/request"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
-	"k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
 
 	appsv1beta1 "github.com/openyurtio/openyurt/pkg/apis/apps/v1beta1"
 	"github.com/openyurtio/openyurt/pkg/projectinfo"
+	yurtutil "github.com/openyurtio/openyurt/pkg/util"
 	"github.com/openyurtio/openyurt/pkg/yurthub/cachemanager"
-	hubrest "github.com/openyurtio/openyurt/pkg/yurthub/kubernetes/rest"
-	proxyutil "github.com/openyurtio/openyurt/pkg/yurthub/proxy/util"
+	"github.com/openyurtio/openyurt/pkg/yurthub/healthchecker"
+	"github.com/openyurtio/openyurt/pkg/yurthub/transport"
 	"github.com/openyurtio/openyurt/pkg/yurthub/util"
 )
 
@@ -45,30 +46,33 @@ const (
 )
 
 var (
-	ErrRestConfigMgr = errors.New("failed to initialize restConfigMgr")
+	ErrDirectClientMgr = errors.New("failed to initialize directClientManager")
 )
 
 type AutonomyProxy struct {
 	cacheMgr         cachemanager.CacheManager
-	restConfigMgr    *hubrest.RestConfigManager
+	healthChecker    healthchecker.Interface
+	clientManager    transport.Interface
 	cacheFailedCount *int32
 }
 
 func NewAutonomyProxy(
-	restConfigMgr *hubrest.RestConfigManager,
+	healthChecker healthchecker.Interface,
+	clientManager transport.Interface,
 	cacheMgr cachemanager.CacheManager,
 ) *AutonomyProxy {
 	return &AutonomyProxy{
-		restConfigMgr:    restConfigMgr,
+		healthChecker:    healthChecker,
+		clientManager:    clientManager,
 		cacheMgr:         cacheMgr,
-		cacheFailedCount: pointer.Int32(0),
+		cacheFailedCount: ptr.To[int32](0),
 	}
 }
 
 func (ap *AutonomyProxy) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	obj, err := ap.updateNodeStatus(req)
 	if err != nil {
-		proxyutil.Err(err, rw, req)
+		util.Err(err, rw, req)
 	}
 	util.WriteObject(http.StatusOK, obj, rw, req)
 }
@@ -86,7 +90,7 @@ func (ap *AutonomyProxy) updateNodeStatus(req *http.Request) (runtime.Object, er
 		if node != nil {
 			retNode = node
 		}
-		if errors.Is(err, ErrRestConfigMgr) {
+		if errors.Is(err, ErrDirectClientMgr) {
 			break
 		} else if err != nil {
 			klog.ErrorS(err, "Error getting or updating node status, will retry")
@@ -118,14 +122,15 @@ func (ap *AutonomyProxy) tryUpdateNodeConditions(tryNumber int, req *http.Reques
 			return nil, fmt.Errorf("could not QueryCache, node is not found")
 		}
 	} else {
-		// initialize client from restConfigMgr
-		if ap.restConfigMgr == nil {
-			return nil, ErrRestConfigMgr
+		var client kubernetes.Interface
+		if yurtutil.IsNil(ap.healthChecker) {
+			return originalNode, ErrDirectClientMgr
+		} else if u := ap.healthChecker.PickOneHealthyBackend(); u != nil {
+			client = ap.clientManager.GetDirectClientset(u)
 		}
-		config := ap.restConfigMgr.GetRestConfig(true)
-		client, err := kubernetes.NewForConfig(config)
-		if err != nil {
-			return nil, err
+
+		if client == nil {
+			return nil, fmt.Errorf("no healthy remote server can be found for direct client")
 		}
 
 		// get node from cloud
@@ -150,13 +155,15 @@ func (ap *AutonomyProxy) tryUpdateNodeConditions(tryNumber int, req *http.Reques
 		return originalNode, nil
 	}
 
-	if ap.restConfigMgr == nil {
-		return originalNode, ErrRestConfigMgr
+	var client kubernetes.Interface
+	if yurtutil.IsNil(ap.healthChecker) {
+		return originalNode, ErrDirectClientMgr
+	} else if u := ap.healthChecker.PickOneHealthyBackend(); u != nil {
+		client = ap.clientManager.GetDirectClientset(u)
 	}
-	config := ap.restConfigMgr.GetRestConfig(true)
-	client, err := kubernetes.NewForConfig(config)
-	if err != nil {
-		return originalNode, err
+
+	if client == nil {
+		return nil, fmt.Errorf("no healthy remote server can be found for updating node condition")
 	}
 
 	updatedNode, err = client.CoreV1().Nodes().UpdateStatus(context.TODO(), changedNode, metav1.UpdateOptions{})

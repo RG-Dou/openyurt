@@ -159,16 +159,16 @@ func add(mgr manager.Manager, cfg *appconfig.CompletedConfig, r reconcile.Reconc
 		},
 	}
 
-	if err := c.Watch(source.Kind(mgr.GetCache(), &appsv1.DaemonSet{}), &handler.EnqueueRequestForObject{}, daemonsetUpdatePredicate); err != nil {
+	if err := c.Watch(source.Kind[client.Object](mgr.GetCache(), &appsv1.DaemonSet{}, &handler.EnqueueRequestForObject{}, daemonsetUpdatePredicate)); err != nil {
 		return err
 	}
 
 	// 2. Watch for deletion of pods. The reason we watch is that we don't want a daemon set to delete
 	// more pods until all the effects (expectations) of a daemon set's delete have been observed.
 	updater := r.(*ReconcileDaemonpodupdater)
-	if err := c.Watch(source.Kind(mgr.GetCache(), &corev1.Pod{}), &handler.Funcs{
+	if err := c.Watch(source.Kind[client.Object](mgr.GetCache(), &corev1.Pod{}, &handler.Funcs{
 		DeleteFunc: updater.deletePod,
-	}); err != nil {
+	})); err != nil {
 		return err
 	}
 	return nil
@@ -207,7 +207,7 @@ func (r *ReconcileDaemonpodupdater) Reconcile(_ context.Context, request reconci
 	// Note !!!!!!!!!!
 	// We strongly recommend use Format() to  encapsulation because Format() can print logs by module
 	// @kadisi
-	klog.V(4).Infof(Format("Reconcile DaemonpodUpdater %s", request.Name))
+	klog.V(4).Info(Format("Reconcile DaemonpodUpdater %s", request.Name))
 
 	// Fetch the DaemonSet instance
 	instance := &appsv1.DaemonSet{}
@@ -240,24 +240,24 @@ func (r *ReconcileDaemonpodupdater) Reconcile(_ context.Context, request reconci
 	switch strings.ToLower(v) {
 	case strings.ToLower(OTAUpdate):
 		if err := r.otaUpdate(instance); err != nil {
-			klog.Errorf(Format("could not OTA update DaemonSet %v pod: %v", request.NamespacedName, err))
+			klog.Error(Format("could not OTA update DaemonSet %v pod: %v", request.NamespacedName, err))
 			return reconcile.Result{}, err
 		}
 
 	case strings.ToLower(AutoUpdate), strings.ToLower(AdvancedRollingUpdate):
 		if err := r.advancedRollingUpdate(instance); err != nil {
-			klog.Errorf(Format("could not advanced rolling update DaemonSet %v pod: %v", request.NamespacedName, err))
+			klog.Error(Format("could not advanced rolling update DaemonSet %v pod: %v", request.NamespacedName, err))
 			return reconcile.Result{}, err
 		}
 	default:
-		klog.Errorf(Format("Unknown update type for DaemonSet %v pod: %v", request.NamespacedName, v))
+		klog.Error(Format("Unknown update type for DaemonSet %v pod: %v", request.NamespacedName, v))
 		return reconcile.Result{}, fmt.Errorf("unknown update type %v", v)
 	}
 
 	return reconcile.Result{}, nil
 }
 
-func (r *ReconcileDaemonpodupdater) deletePod(ctx context.Context, evt event.DeleteEvent, _ workqueue.RateLimitingInterface) {
+func (r *ReconcileDaemonpodupdater) deletePod(ctx context.Context, evt event.DeleteEvent, _ workqueue.TypedRateLimitingInterface[reconcile.Request]) {
 	pod, ok := evt.Object.(*corev1.Pod)
 	if !ok {
 		utilruntime.HandleError(fmt.Errorf("deletepod could not deal with object that is not a pod %#v", evt.Object))
@@ -376,7 +376,7 @@ func (r *ReconcileDaemonpodupdater) advancedRollingUpdate(ds *appsv1.DaemonSet) 
 			}
 		}
 	}
-	// Use any of the candidates we can, including the allowedReplacemnntPods
+	// Use any of the candidates we can, including the allowedReplacementPods
 	klog.V(5).Infof("DaemonSet %s/%s allowing %d replacements, up to %d unavailable, %d are unavailable, %d candidates", ds.Namespace, ds.Name, len(allowedReplacementPods), maxUnavailable, numUnavailable, len(candidatePodsToDelete))
 	remainingUnavailable := maxUnavailable - numUnavailable
 	if remainingUnavailable < 0 {

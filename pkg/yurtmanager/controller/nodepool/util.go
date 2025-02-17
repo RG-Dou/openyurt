@@ -24,13 +24,12 @@ import (
 	corev1 "k8s.io/api/core/v1"
 
 	"github.com/openyurtio/openyurt/pkg/apis/apps"
-	appsv1beta1 "github.com/openyurtio/openyurt/pkg/apis/apps/v1beta1"
-	nodeutil "github.com/openyurtio/openyurt/pkg/yurtmanager/controller/util/node"
+	appsv1beta2 "github.com/openyurtio/openyurt/pkg/apis/apps/v1beta2"
 )
 
 // conciliatePoolRelatedAttrs will update the node's attributes that related to
 // the nodepool
-func conciliateNode(node *corev1.Node, nodePool *appsv1beta1.NodePool) (bool, error) {
+func conciliateNode(node *corev1.Node, nodePool *appsv1beta2.NodePool) (bool, error) {
 	// update node attr
 	newNpra := &NodePoolRelatedAttributes{
 		Labels:      nodePool.Spec.Labels,
@@ -109,7 +108,7 @@ func conciliateNodePoolStatus(
 	readyNode,
 	notReadyNode int32,
 	nodes []string,
-	nodePool *appsv1beta1.NodePool) (needUpdate bool) {
+	nodePool *appsv1beta2.NodePool) (needUpdate bool) {
 
 	if readyNode != nodePool.Status.ReadyNodeNum {
 		nodePool.Status.ReadyNodeNum = readyNode
@@ -142,13 +141,6 @@ func containTaint(taint corev1.Taint, taints []corev1.Taint) (int, bool) {
 		}
 	}
 	return 0, false
-}
-
-// isNodeReady checks if the `node` is `corev1.NodeReady`
-func isNodeReady(node corev1.Node) bool {
-	_, nc := nodeutil.GetNodeCondition(&node.Status, corev1.NodeReady)
-	// GetNodeCondition will return nil and -1 if the condition is not present
-	return nc != nil && nc.Status == corev1.ConditionTrue
 }
 
 func mergeMap(m1, m2 map[string]string) map[string]string {
@@ -208,7 +200,8 @@ func areNodePoolRelatedAttributesEqual(a, b *NodePoolRelatedAttributes) bool {
 	}
 
 	isLabelsEqual := (len(a.Labels) == 0 && len(b.Labels) == 0) || reflect.DeepEqual(a.Labels, b.Labels)
-	isAnnotationsEqual := (len(a.Annotations) == 0 && len(b.Annotations) == 0) || reflect.DeepEqual(a.Annotations, b.Annotations)
+	isAnnotationsEqual := (len(a.Annotations) == 0 && len(b.Annotations) == 0) ||
+		reflect.DeepEqual(a.Annotations, b.Annotations)
 	isTaintsEqual := (len(a.Taints) == 0 && len(b.Taints) == 0) || reflect.DeepEqual(a.Taints, b.Taints)
 
 	return isLabelsEqual && isAnnotationsEqual && isTaintsEqual

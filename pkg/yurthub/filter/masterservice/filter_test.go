@@ -23,7 +23,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/util/sets"
 
 	"github.com/openyurtio/openyurt/pkg/util"
 	"github.com/openyurtio/openyurt/pkg/yurthub/filter/base"
@@ -44,24 +43,6 @@ func TestName(t *testing.T) {
 	}
 }
 
-func TestSupportedResourceAndVerbs(t *testing.T) {
-	msf, _ := NewMasterServiceFilter()
-	rvs := msf.SupportedResourceAndVerbs()
-	if len(rvs) != 1 {
-		t.Errorf("supported more than one resources, %v", rvs)
-	}
-
-	for resource, verbs := range rvs {
-		if resource != "services" {
-			t.Errorf("expect resource is services, but got %s", resource)
-		}
-
-		if !verbs.Equal(sets.New("list", "watch")) {
-			t.Errorf("expect verbs are list/watch, but got %v", verbs.UnsortedList())
-		}
-	}
-}
-
 func TestFilter(t *testing.T) {
 	masterServiceHost := "169.251.2.1"
 	var masterServicePort int32
@@ -79,7 +60,8 @@ func TestFilter(t *testing.T) {
 					Namespace: MasterServiceNamespace,
 				},
 				Spec: corev1.ServiceSpec{
-					ClusterIP: "10.96.0.1",
+					ClusterIP:  "10.96.0.1",
+					ClusterIPs: []string{"10.96.0.1"},
 					Ports: []corev1.ServicePort{
 						{
 							Port: 443,
@@ -94,7 +76,8 @@ func TestFilter(t *testing.T) {
 					Namespace: MasterServiceNamespace,
 				},
 				Spec: corev1.ServiceSpec{
-					ClusterIP: masterServiceHost,
+					ClusterIP:  masterServiceHost,
+					ClusterIPs: []string{masterServiceHost},
 					Ports: []corev1.ServicePort{
 						{
 							Port: masterServicePort,
@@ -111,7 +94,8 @@ func TestFilter(t *testing.T) {
 					Namespace: MasterServiceNamespace,
 				},
 				Spec: corev1.ServiceSpec{
-					ClusterIP: "10.96.0.1",
+					ClusterIP:  "10.96.0.1",
+					ClusterIPs: []string{"10.96.0.1"},
 					Ports: []corev1.ServicePort{
 						{
 							Port: 443,
@@ -126,7 +110,8 @@ func TestFilter(t *testing.T) {
 					Namespace: MasterServiceNamespace,
 				},
 				Spec: corev1.ServiceSpec{
-					ClusterIP: "10.96.0.1",
+					ClusterIP:  "10.96.0.1",
+					ClusterIPs: []string{"10.96.0.1"},
 					Ports: []corev1.ServicePort{
 						{
 							Port: 443,

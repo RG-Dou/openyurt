@@ -84,7 +84,7 @@ func add(mgr manager.Manager, cfg *appconfig.CompletedConfig, r reconcile.Reconc
 	}
 
 	// Watch for changes to service
-	err = c.Watch(source.Kind(mgr.GetCache(), &corev1.Service{}), &EnqueueRequestForServiceEvent{}, predicate.NewPredicateFuncs(
+	err = c.Watch(source.Kind[client.Object](mgr.GetCache(), &corev1.Service{}, &EnqueueRequestForServiceEvent{}, predicate.NewPredicateFuncs(
 		func(obj client.Object) bool {
 			svc, ok := obj.(*corev1.Service)
 			if !ok {
@@ -94,12 +94,12 @@ func add(mgr manager.Manager, cfg *appconfig.CompletedConfig, r reconcile.Reconc
 				return false
 			}
 			return svc.Namespace == util.WorkingNamespace && svc.Name == util.GatewayProxyInternalService
-		}))
+		})))
 	if err != nil {
 		return err
 	}
 	//Watch for changes to nodes
-	err = c.Watch(source.Kind(mgr.GetCache(), &corev1.Node{}), &EnqueueRequestForNodeEvent{})
+	err = c.Watch(source.Kind[client.Object](mgr.GetCache(), &corev1.Node{}, &EnqueueRequestForNodeEvent{}))
 	if err != nil {
 		return err
 	}
@@ -131,7 +131,7 @@ func (r *ReconcileDns) Reconcile(ctx context.Context, req reconcile.Request) (re
 	} else {
 		svc, err := r.getService(ctx, types.NamespacedName{Namespace: util.WorkingNamespace, Name: util.GatewayProxyInternalService})
 		if err != nil && !apierrors.IsNotFound(err) {
-			klog.Errorf(Format("could not get service %s/%s", util.WorkingNamespace, util.GatewayProxyInternalService))
+			klog.Error(Format("could not get service %s/%s", util.WorkingNamespace, util.GatewayProxyInternalService))
 			return reconcile.Result{Requeue: true, RequeueAfter: 2 * time.Second}, err
 		}
 		if apierrors.IsNotFound(err) || svc.DeletionTimestamp != nil {
@@ -139,7 +139,7 @@ func (r *ReconcileDns) Reconcile(ctx context.Context, req reconcile.Request) (re
 		}
 		if svc != nil {
 			if svc.Spec.ClusterIP == "" {
-				klog.Infoln("the service %s/%s cluster IP is empty", util.WorkingNamespace, util.GatewayProxyInternalService)
+				klog.Infof("the service %s/%s cluster IP is empty", util.WorkingNamespace, util.GatewayProxyInternalService)
 			} else {
 				proxyAddress = svc.Spec.ClusterIP
 			}
@@ -150,13 +150,13 @@ func (r *ReconcileDns) Reconcile(ctx context.Context, req reconcile.Request) (re
 	nodeList := corev1.NodeList{}
 	err = r.Client.List(ctx, &nodeList, &client.ListOptions{})
 	if err != nil {
-		klog.Errorf(Format("could not list node, error %s", err.Error()))
+		klog.Error(Format("could not list node, error %s", err.Error()))
 		return reconcile.Result{Requeue: true, RequeueAfter: 2 * time.Second}, err
 	}
 	cm.Data[util.ProxyNodesKey] = buildDNSRecords(&nodeList, enableProxy, proxyAddress)
 	err = r.updateDNS(cm)
 	if err != nil {
-		klog.Errorf(Format("could not update configmap %s/%s, error %s",
+		klog.Error(Format("could not update configmap %s/%s, error %s",
 			cm.GetNamespace(), cm.GetName(), err.Error()))
 		return reconcile.Result{Requeue: true, RequeueAfter: 2 * time.Second}, err
 	}
@@ -171,10 +171,10 @@ func (r ReconcileDns) getProxyDNS(ctx context.Context, objKey client.ObjectKey) 
 			if apierrors.IsNotFound(err) {
 				err = r.buildRavenDNSConfigMap()
 				if err != nil {
-					klog.Errorf(Format(err.Error()))
+					klog.Error(err.Error())
 				}
 			} else {
-				klog.Errorf(Format("could not get configmap %s, error %s", objKey.String(), err.Error()))
+				klog.Error(Format("could not get configmap %s, error %s", objKey.String(), err.Error()))
 			}
 			return false, nil
 		}
@@ -234,7 +234,7 @@ func buildDNSRecords(nodeList *corev1.NodeList, needProxy bool, proxyIp string) 
 		if !needProxy {
 			ip, err = getHostIP(&node)
 			if err != nil {
-				klog.Errorf(Format("could not parse node address for %s, %s", node.Name, err.Error()))
+				klog.Error(Format("could not parse node address for %s, %s", node.Name, err.Error()))
 				continue
 			}
 		}
@@ -246,7 +246,7 @@ func buildDNSRecords(nodeList *corev1.NodeList, needProxy bool, proxyIp string) 
 
 func getHostIP(node *corev1.Node) (string, error) {
 	// get InternalIPs first and then ExternalIPs
-	var internalIP, externalIP net.IP
+	var externalIP net.IP
 	for _, addr := range node.Status.Addresses {
 		switch addr.Type {
 		case corev1.NodeInternalIP:
@@ -261,7 +261,7 @@ func getHostIP(node *corev1.Node) (string, error) {
 			}
 		}
 	}
-	if internalIP == nil && externalIP == nil {
+	if externalIP == nil {
 		return "", fmt.Errorf("host IP unknown; known addresses: %v", node.Status.Addresses)
 	}
 	return externalIP.String(), nil

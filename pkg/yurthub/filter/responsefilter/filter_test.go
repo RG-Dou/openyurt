@@ -45,7 +45,7 @@ import (
 	"github.com/openyurtio/openyurt/cmd/yurthub/app/options"
 	"github.com/openyurtio/openyurt/pkg/apis"
 	"github.com/openyurtio/openyurt/pkg/apis/apps/v1alpha1"
-	"github.com/openyurtio/openyurt/pkg/apis/apps/v1beta1"
+	"github.com/openyurtio/openyurt/pkg/apis/apps/v1beta2"
 	"github.com/openyurtio/openyurt/pkg/projectinfo"
 	"github.com/openyurtio/openyurt/pkg/yurthub/filter"
 	"github.com/openyurtio/openyurt/pkg/yurthub/filter/base"
@@ -422,12 +422,10 @@ func TestResponseFilterForListRequest(t *testing.T) {
 	poolName := "foo"
 	masterHost := "169.254.2.1"
 	masterPort := "10268"
-	var masterPortInt int32
-	masterPortInt = 10268
+	masterPortInt := int32(10268)
 	readyCondition := true
 	portName := "https"
-	var kasPort int32
-	kasPort = 443
+	kasPort := int32(443)
 	scheme := runtime.NewScheme()
 	apis.AddToScheme(scheme)
 	nodeBucketGVRToListKind := map[schema.GroupVersionResource]string{
@@ -769,7 +767,8 @@ func TestResponseFilterForListRequest(t *testing.T) {
 							Namespace: masterservice.MasterServiceNamespace,
 						},
 						Spec: corev1.ServiceSpec{
-							ClusterIP: "10.96.0.1",
+							ClusterIP:  "10.96.0.1",
+							ClusterIPs: []string{"10.96.0.1"},
 							Ports: []corev1.ServicePort{
 								{
 									Port: 443,
@@ -784,7 +783,8 @@ func TestResponseFilterForListRequest(t *testing.T) {
 							Namespace: masterservice.MasterServiceNamespace,
 						},
 						Spec: corev1.ServiceSpec{
-							ClusterIP: "10.96.105.188",
+							ClusterIP:  "10.96.105.188",
+							ClusterIPs: []string{"10.96.105.188"},
 							Ports: []corev1.ServicePort{
 								{
 									Port: 80,
@@ -806,7 +806,8 @@ func TestResponseFilterForListRequest(t *testing.T) {
 							Namespace: masterservice.MasterServiceNamespace,
 						},
 						Spec: corev1.ServiceSpec{
-							ClusterIP: masterHost,
+							ClusterIP:  masterHost,
+							ClusterIPs: []string{masterHost},
 							Ports: []corev1.ServicePort{
 								{
 									Port: masterPortInt,
@@ -821,7 +822,8 @@ func TestResponseFilterForListRequest(t *testing.T) {
 							Namespace: masterservice.MasterServiceNamespace,
 						},
 						Spec: corev1.ServiceSpec{
-							ClusterIP: "10.96.105.188",
+							ClusterIP:  "10.96.105.188",
+							ClusterIPs: []string{"10.96.105.188"},
 							Ports: []corev1.ServicePort{
 								{
 									Port: 80,
@@ -852,7 +854,8 @@ func TestResponseFilterForListRequest(t *testing.T) {
 							Namespace: masterservice.MasterServiceNamespace,
 						},
 						Spec: corev1.ServiceSpec{
-							ClusterIP: "10.96.105.188",
+							ClusterIP:  "10.96.105.188",
+							ClusterIPs: []string{"10.96.105.188"},
 							Ports: []corev1.ServicePort{
 								{
 									Port: 80,
@@ -874,7 +877,8 @@ func TestResponseFilterForListRequest(t *testing.T) {
 							Namespace: masterservice.MasterServiceNamespace,
 						},
 						Spec: corev1.ServiceSpec{
-							ClusterIP: "10.96.105.188",
+							ClusterIP:  "10.96.105.188",
+							ClusterIPs: []string{"10.96.105.188"},
 							Ports: []corev1.ServicePort{
 								{
 									Port: 80,
@@ -903,7 +907,8 @@ func TestResponseFilterForListRequest(t *testing.T) {
 					Namespace: masterservice.MasterServiceNamespace,
 				},
 				Spec: corev1.ServiceSpec{
-					ClusterIP: "10.96.105.188",
+					ClusterIP:  "10.96.105.188",
+					ClusterIPs: []string{"10.96.105.188"},
 					Ports: []corev1.ServicePort{
 						{
 							Port: 80,
@@ -922,7 +927,8 @@ func TestResponseFilterForListRequest(t *testing.T) {
 					Namespace: masterservice.MasterServiceNamespace,
 				},
 				Spec: corev1.ServiceSpec{
-					ClusterIP: masterHost,
+					ClusterIP:  masterHost,
+					ClusterIPs: []string{masterHost},
 					Ports: []corev1.ServicePort{
 						{
 							Port: masterPortInt,
@@ -1441,28 +1447,28 @@ func TestResponseFilterForListRequest(t *testing.T) {
 				},
 			),
 			yurtClient: fake.NewSimpleDynamicClientWithCustomListKinds(scheme, gvrToListKind,
-				&v1beta1.NodePool{
+				&v1beta2.NodePool{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: "hangzhou",
 					},
-					Spec: v1beta1.NodePoolSpec{
-						Type: v1beta1.Edge,
+					Spec: v1beta2.NodePoolSpec{
+						Type: v1beta2.Edge,
 					},
-					Status: v1beta1.NodePoolStatus{
+					Status: v1beta2.NodePoolStatus{
 						Nodes: []string{
 							"node1",
 							"node3",
 						},
 					},
 				},
-				&v1beta1.NodePool{
+				&v1beta2.NodePool{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: "shanghai",
 					},
-					Spec: v1beta1.NodePoolSpec{
-						Type: v1beta1.Edge,
+					Spec: v1beta2.NodePoolSpec{
+						Type: v1beta2.Edge,
 					},
-					Status: v1beta1.NodePoolStatus{
+					Status: v1beta2.NodePoolStatus{
 						Nodes: []string{
 							"node2",
 						},
@@ -2220,6 +2226,368 @@ func TestResponseFilterForListRequest(t *testing.T) {
 				},
 			},
 		},
+		"serviceenvupdater: updates service host and service port env vars in multiple pods": {
+			masterHost: masterHost,
+			masterPort: masterPort,
+			kubeClient: &k8sfake.Clientset{},
+			yurtClient: &fake.FakeDynamicClient{},
+			poolName:   poolName,
+			group:      "",
+			version:    "v1",
+			resource:   "pods",
+			userAgent:  "kubelet",
+			verb:       "GET",
+			path:       "/api/v1/pods",
+			accept:     "application/json",
+			inputObj: &corev1.PodList{
+				TypeMeta: metav1.TypeMeta{
+					Kind:       "PodList",
+					APIVersion: "v1",
+				},
+				Items: []corev1.Pod{
+					{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      "pod1",
+							Namespace: "kube-system",
+						},
+						Spec: corev1.PodSpec{
+							Containers: []corev1.Container{
+								{
+									Name: "test-container",
+									Env: []corev1.EnvVar{
+										{Name: "KUBERNETES_SERVICE_HOST", Value: "192.0.2.1"},
+										{Name: "KUBERNETES_SERVICE_PORT", Value: "1234"},
+										{Name: "OTHER_ENV_VAR", Value: "some-value"},
+									},
+								},
+							},
+						},
+					},
+					{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      "pod2",
+							Namespace: "default",
+						},
+						Spec: corev1.PodSpec{
+							Containers: []corev1.Container{
+								{
+									Name: "test-container",
+									Env: []corev1.EnvVar{
+										{Name: "OTHER_ENV_VAR", Value: "some-value"},
+										{Name: "KUBERNETES_SERVICE_HOST", Value: "192.0.2.1"},
+										{Name: "KUBERNETES_SERVICE_PORT", Value: "1234"},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			expectedObj: &corev1.PodList{
+				TypeMeta: metav1.TypeMeta{
+					Kind:       "PodList",
+					APIVersion: "v1",
+				},
+				Items: []corev1.Pod{
+					{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      "pod1",
+							Namespace: "kube-system",
+						},
+						Spec: corev1.PodSpec{
+							Containers: []corev1.Container{
+								{
+									Name: "test-container",
+									Env: []corev1.EnvVar{
+										{Name: "KUBERNETES_SERVICE_HOST", Value: masterHost},
+										{Name: "KUBERNETES_SERVICE_PORT", Value: masterPort},
+										{Name: "OTHER_ENV_VAR", Value: "some-value"},
+									},
+								},
+							},
+						},
+					},
+					{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      "pod2",
+							Namespace: "default",
+						},
+						Spec: corev1.PodSpec{
+							Containers: []corev1.Container{
+								{
+									Name: "test-container",
+									Env: []corev1.EnvVar{
+										{Name: "OTHER_ENV_VAR", Value: "some-value"},
+										{Name: "KUBERNETES_SERVICE_HOST", Value: masterHost},
+										{Name: "KUBERNETES_SERVICE_PORT", Value: masterPort},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		"serviceenvupdater: updates service host and service port env vars in multiple containers per pod": {
+			masterHost: masterHost,
+			masterPort: masterPort,
+			kubeClient: &k8sfake.Clientset{},
+			yurtClient: &fake.FakeDynamicClient{},
+			poolName:   poolName,
+			group:      "",
+			version:    "v1",
+			resource:   "pods",
+			userAgent:  "kubelet",
+			verb:       "GET",
+			path:       "/api/v1/pods",
+			accept:     "application/json",
+			inputObj: &corev1.PodList{
+				TypeMeta: metav1.TypeMeta{
+					Kind:       "PodList",
+					APIVersion: "v1",
+				},
+				Items: []corev1.Pod{
+					{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      "pod1",
+							Namespace: "kube-system",
+						},
+						Spec: corev1.PodSpec{
+							Containers: []corev1.Container{
+								{
+									Name: "test-container",
+									Env: []corev1.EnvVar{
+										{Name: "KUBERNETES_SERVICE_HOST", Value: "192.0.2.1"},
+										{Name: "KUBERNETES_SERVICE_PORT", Value: "1234"},
+										{Name: "OTHER_ENV_VAR", Value: "some-value"},
+									},
+								},
+								{
+									Name: "test-container1",
+									Env: []corev1.EnvVar{
+										{Name: "KUBERNETES_SERVICE_HOST", Value: "192.0.2.1"},
+										{Name: "KUBERNETES_SERVICE_PORT", Value: "1234"},
+										{Name: "OTHER_ENV_VAR", Value: "some-value"},
+									},
+								},
+							},
+						},
+					},
+					{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      "pod2",
+							Namespace: "default",
+						},
+						Spec: corev1.PodSpec{
+							Containers: []corev1.Container{
+								{
+									Name: "test-container",
+									Env: []corev1.EnvVar{
+										{Name: "OTHER_ENV_VAR", Value: "some-value"},
+										{Name: "KUBERNETES_SERVICE_HOST", Value: "192.0.2.1"},
+										{Name: "KUBERNETES_SERVICE_PORT", Value: "1234"},
+									},
+								},
+								{
+									Name: "test-container1",
+									Env: []corev1.EnvVar{
+										{Name: "OTHER_ENV_VAR", Value: "some-value"},
+										{Name: "KUBERNETES_SERVICE_HOST", Value: "192.0.2.1"},
+										{Name: "KUBERNETES_SERVICE_PORT", Value: "1234"},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			expectedObj: &corev1.PodList{
+				TypeMeta: metav1.TypeMeta{
+					Kind:       "PodList",
+					APIVersion: "v1",
+				},
+				Items: []corev1.Pod{
+					{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      "pod1",
+							Namespace: "kube-system",
+						},
+						Spec: corev1.PodSpec{
+							Containers: []corev1.Container{
+								{
+									Name: "test-container",
+									Env: []corev1.EnvVar{
+										{Name: "KUBERNETES_SERVICE_HOST", Value: masterHost},
+										{Name: "KUBERNETES_SERVICE_PORT", Value: masterPort},
+										{Name: "OTHER_ENV_VAR", Value: "some-value"},
+									},
+								},
+								{
+									Name: "test-container1",
+									Env: []corev1.EnvVar{
+										{Name: "KUBERNETES_SERVICE_HOST", Value: masterHost},
+										{Name: "KUBERNETES_SERVICE_PORT", Value: masterPort},
+										{Name: "OTHER_ENV_VAR", Value: "some-value"},
+									},
+								},
+							},
+						},
+					},
+					{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      "pod2",
+							Namespace: "default",
+						},
+						Spec: corev1.PodSpec{
+							Containers: []corev1.Container{
+								{
+									Name: "test-container",
+									Env: []corev1.EnvVar{
+										{Name: "OTHER_ENV_VAR", Value: "some-value"},
+										{Name: "KUBERNETES_SERVICE_HOST", Value: masterHost},
+										{Name: "KUBERNETES_SERVICE_PORT", Value: masterPort},
+									},
+								},
+								{
+									Name: "test-container1",
+									Env: []corev1.EnvVar{
+										{Name: "OTHER_ENV_VAR", Value: "some-value"},
+										{Name: "KUBERNETES_SERVICE_HOST", Value: masterHost},
+										{Name: "KUBERNETES_SERVICE_PORT", Value: masterPort},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		"serviceenvupdater: updates service host env var - service port env var does not exist": {
+			masterHost: masterHost,
+			masterPort: masterPort,
+			kubeClient: &k8sfake.Clientset{},
+			yurtClient: &fake.FakeDynamicClient{},
+			poolName:   poolName,
+			group:      "",
+			version:    "v1",
+			resource:   "pods",
+			userAgent:  "kubelet",
+			verb:       "GET",
+			path:       "/api/v1/pods",
+			accept:     "application/json",
+			inputObj: &corev1.PodList{
+				TypeMeta: metav1.TypeMeta{
+					Kind:       "PodList",
+					APIVersion: "v1",
+				},
+				Items: []corev1.Pod{
+					{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      "pod1",
+							Namespace: "kube-system",
+						},
+						Spec: corev1.PodSpec{
+							Containers: []corev1.Container{
+								{
+									Name: "test-container",
+									Env: []corev1.EnvVar{
+										{Name: "KUBERNETES_SERVICE_HOST", Value: "192.0.2.1"},
+										{Name: "OTHER_ENV_VAR", Value: "some-value"},
+									},
+								},
+								{
+									Name: "test-container1",
+									Env: []corev1.EnvVar{
+										{Name: "KUBERNETES_SERVICE_HOST", Value: "192.0.2.1"},
+										{Name: "OTHER_ENV_VAR", Value: "some-value"},
+									},
+								},
+							},
+						},
+					},
+					{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      "pod2",
+							Namespace: "default",
+						},
+						Spec: corev1.PodSpec{
+							Containers: []corev1.Container{
+								{
+									Name: "test-container",
+									Env: []corev1.EnvVar{
+										{Name: "OTHER_ENV_VAR", Value: "some-value"},
+										{Name: "KUBERNETES_SERVICE_HOST", Value: "192.0.2.1"},
+									},
+								},
+								{
+									Name: "test-container1",
+									Env: []corev1.EnvVar{
+										{Name: "OTHER_ENV_VAR", Value: "some-value"},
+										{Name: "KUBERNETES_SERVICE_HOST", Value: "192.0.2.1"},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			expectedObj: &corev1.PodList{
+				TypeMeta: metav1.TypeMeta{
+					Kind:       "PodList",
+					APIVersion: "v1",
+				},
+				Items: []corev1.Pod{
+					{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      "pod1",
+							Namespace: "kube-system",
+						},
+						Spec: corev1.PodSpec{
+							Containers: []corev1.Container{
+								{
+									Name: "test-container",
+									Env: []corev1.EnvVar{
+										{Name: "KUBERNETES_SERVICE_HOST", Value: masterHost},
+										{Name: "OTHER_ENV_VAR", Value: "some-value"},
+									},
+								},
+								{
+									Name: "test-container1",
+									Env: []corev1.EnvVar{
+										{Name: "KUBERNETES_SERVICE_HOST", Value: masterHost},
+										{Name: "OTHER_ENV_VAR", Value: "some-value"},
+									},
+								},
+							},
+						},
+					},
+					{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      "pod2",
+							Namespace: "default",
+						},
+						Spec: corev1.PodSpec{
+							Containers: []corev1.Container{
+								{
+									Name: "test-container",
+									Env: []corev1.EnvVar{
+										{Name: "OTHER_ENV_VAR", Value: "some-value"},
+										{Name: "KUBERNETES_SERVICE_HOST", Value: masterHost},
+									},
+								},
+								{
+									Name: "test-container1",
+									Env: []corev1.EnvVar{
+										{Name: "OTHER_ENV_VAR", Value: "some-value"},
+										{Name: "KUBERNETES_SERVICE_HOST", Value: masterHost},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
 	}
 
 	resolver := newTestRequestInfoResolver()
@@ -2233,8 +2601,19 @@ func TestResponseFilterForListRequest(t *testing.T) {
 			factory = informers.NewSharedInformerFactory(tc.kubeClient, 24*time.Hour)
 			yurtFactory = dynamicinformer.NewDynamicSharedInformerFactory(tc.yurtClient, 24*time.Hour)
 
-			nodesInitializer = initializer.NewNodesInitializer(tc.enableNodePool, tc.enablePoolServiceTopology, yurtFactory)
-			genericInitializer = initializer.New(factory, tc.kubeClient, tc.nodeName, tc.poolName, tc.masterHost, tc.masterPort)
+			nodesInitializer = initializer.NewNodesInitializer(
+				tc.enableNodePool,
+				tc.enablePoolServiceTopology,
+				yurtFactory,
+			)
+			genericInitializer = initializer.New(
+				factory,
+				tc.kubeClient,
+				tc.nodeName,
+				tc.poolName,
+				tc.masterHost,
+				tc.masterPort,
+			)
 			initializerChain := base.Initializers{}
 			initializerChain = append(initializerChain, genericInitializer, nodesInitializer)
 
@@ -2242,9 +2621,13 @@ func TestResponseFilterForListRequest(t *testing.T) {
 			baseFilters := base.NewFilters([]string{})
 			options.RegisterAllFilters(baseFilters)
 
-			objectFilters, err := baseFilters.NewFromFilters(initializerChain)
+			nameToFilter, err := baseFilters.NewFromFilters(initializerChain)
 			if err != nil {
 				t.Errorf("couldn't new object filters, %v", err)
+			}
+			objectFilters := make([]filter.ObjectFilter, 0, len(nameToFilter))
+			for _, objFilter := range nameToFilter {
+				objectFilters = append(objectFilters, objFilter)
 			}
 
 			s := serializerManager.CreateSerializer(tc.accept, tc.group, tc.version, tc.resource)
@@ -2291,7 +2674,7 @@ func TestResponseFilterForListRequest(t *testing.T) {
 				_, newReadCloser, filterErr = responseFilter.Filter(req, rc, nil)
 			})
 
-			handler = util.WithRequestClientComponent(handler, hubutil.WorkingModeEdge)
+			handler = util.WithRequestClientComponent(handler)
 			handler = filters.WithRequestInfo(handler, resolver)
 			handler.ServeHTTP(httptest.NewRecorder(), req)
 
@@ -2506,7 +2889,7 @@ func TestResponseFilterForWatchRequest(t *testing.T) {
 				_, newReadCloser, filterErr = responseFilter.Filter(req, rc, nil)
 			})
 
-			handler = util.WithRequestClientComponent(handler, hubutil.WorkingModeEdge)
+			handler = util.WithRequestClientComponent(handler)
 			handler = filters.WithRequestInfo(handler, resolver)
 			handler.ServeHTTP(httptest.NewRecorder(), req)
 

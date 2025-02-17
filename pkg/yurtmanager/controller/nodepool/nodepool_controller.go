@@ -34,13 +34,14 @@ import (
 	yurtClient "github.com/openyurtio/openyurt/cmd/yurt-manager/app/client"
 	"github.com/openyurtio/openyurt/cmd/yurt-manager/app/config"
 	"github.com/openyurtio/openyurt/cmd/yurt-manager/names"
-	appsv1beta1 "github.com/openyurtio/openyurt/pkg/apis/apps/v1beta1"
+	appsv1beta2 "github.com/openyurtio/openyurt/pkg/apis/apps/v1beta2"
 	"github.com/openyurtio/openyurt/pkg/projectinfo"
 	poolconfig "github.com/openyurtio/openyurt/pkg/yurtmanager/controller/nodepool/config"
+	nodeutil "github.com/openyurtio/openyurt/pkg/yurtmanager/controller/util/node"
 )
 
 var (
-	controllerResource = appsv1beta1.SchemeGroupVersion.WithResource("nodepools")
+	controllerResource = appsv1beta2.SchemeGroupVersion.WithResource("nodepools")
 )
 
 func Format(format string, args ...interface{}) string {
@@ -81,16 +82,18 @@ func Add(ctx context.Context, c *config.CompletedConfig, mgr manager.Manager) er
 	}
 
 	// Watch for changes to NodePool
-	err = ctrl.Watch(source.Kind(mgr.GetCache(), &appsv1beta1.NodePool{}), &handler.EnqueueRequestForObject{})
+	err = ctrl.Watch(
+		source.Kind[client.Object](mgr.GetCache(), &appsv1beta2.NodePool{}, &handler.EnqueueRequestForObject{}),
+	)
 	if err != nil {
 		return err
 	}
 
 	// Watch for changes to Node
-	err = ctrl.Watch(source.Kind(mgr.GetCache(), &corev1.Node{}), &EnqueueNodePoolForNode{
+	err = ctrl.Watch(source.Kind[client.Object](mgr.GetCache(), &corev1.Node{}, &EnqueueNodePoolForNode{
 		EnableSyncNodePoolConfigurations: r.cfg.EnableSyncNodePoolConfigurations,
 		Recorder:                         r.recorder,
-	})
+	}))
 	if err != nil {
 		return err
 	}
@@ -116,9 +119,9 @@ func (r *ReconcileNodePool) Reconcile(ctx context.Context, req reconcile.Request
 	// Note !!!!!!!!!!
 	// We strongly recommend use Format() to  encapsulation because Format() can print logs by module
 	// @kadisi
-	klog.Infof(Format("Reconcile NodePool %s", req.Name))
+	klog.Info(Format("Reconcile NodePool %s", req.Name))
 
-	var nodePool appsv1beta1.NodePool
+	var nodePool appsv1beta2.NodePool
 	// try to reconcile the NodePool object
 	if err := r.Get(ctx, req.NamespacedName, &nodePool); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
@@ -142,7 +145,7 @@ func (r *ReconcileNodePool) Reconcile(ctx context.Context, req reconcile.Request
 	for _, node := range currentNodeList.Items {
 		// prepare nodepool status
 		nodes = append(nodes, node.GetName())
-		if isNodeReady(node) {
+		if nodeutil.IsNodeReady(node) {
 			readyNode += 1
 		} else {
 			notReadyNode += 1
@@ -156,7 +159,7 @@ func (r *ReconcileNodePool) Reconcile(ctx context.Context, req reconcile.Request
 			}
 			if updated {
 				if err := r.Update(ctx, &node); err != nil {
-					klog.Errorf(Format("Update Node %s error %v", node.Name, err))
+					klog.Error(Format("Update Node %s error %v", node.Name, err))
 					return ctrl.Result{}, err
 				}
 			}

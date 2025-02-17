@@ -22,7 +22,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	v1 "k8s.io/kubernetes/pkg/apis/core/v1"
-	utilpointer "k8s.io/utils/pointer"
+	utilpointer "k8s.io/utils/ptr"
 )
 
 // SetDefaultsNodePool set default values for NodePool.
@@ -38,7 +38,7 @@ func SetDefaultsNodePool(obj *NodePool) {
 func SetDefaultsYurtAppSet(obj *YurtAppSet) {
 
 	if obj.Spec.RevisionHistoryLimit == nil {
-		obj.Spec.RevisionHistoryLimit = utilpointer.Int32(10)
+		obj.Spec.RevisionHistoryLimit = utilpointer.To[int32](10)
 	}
 
 	if obj.Spec.WorkloadTemplate.StatefulSetTemplate != nil {
@@ -68,12 +68,6 @@ func SetDefaultPodSpec(in *corev1.PodSpec) {
 		if a.VolumeSource.Secret != nil {
 			v1.SetDefaults_SecretVolumeSource(a.VolumeSource.Secret)
 		}
-		if a.VolumeSource.ISCSI != nil {
-			v1.SetDefaults_ISCSIVolumeSource(a.VolumeSource.ISCSI)
-		}
-		if a.VolumeSource.RBD != nil {
-			v1.SetDefaults_RBDVolumeSource(a.VolumeSource.RBD)
-		}
 		if a.VolumeSource.DownwardAPI != nil {
 			v1.SetDefaults_DownwardAPIVolumeSource(a.VolumeSource.DownwardAPI)
 			for j := range a.VolumeSource.DownwardAPI.Items {
@@ -85,9 +79,6 @@ func SetDefaultPodSpec(in *corev1.PodSpec) {
 		}
 		if a.VolumeSource.ConfigMap != nil {
 			v1.SetDefaults_ConfigMapVolumeSource(a.VolumeSource.ConfigMap)
-		}
-		if a.VolumeSource.AzureDisk != nil {
-			v1.SetDefaults_AzureDiskVolumeSource(a.VolumeSource.AzureDisk)
 		}
 		if a.VolumeSource.Projected != nil {
 			v1.SetDefaults_ProjectedVolumeSource(a.VolumeSource.Projected)
@@ -105,9 +96,6 @@ func SetDefaultPodSpec(in *corev1.PodSpec) {
 					v1.SetDefaults_ServiceAccountTokenProjection(b.ServiceAccountToken)
 				}
 			}
-		}
-		if a.VolumeSource.ScaleIO != nil {
-			v1.SetDefaults_ScaleIOVolumeSource(a.VolumeSource.ScaleIO)
 		}
 	}
 	for i := range in.InitContainers {
@@ -239,7 +227,7 @@ func SetDefaultsYurtStaticSet(obj *YurtStaticSet) {
 func SetDefaultsYurtAppDaemon(obj *YurtAppDaemon) {
 
 	if obj.Spec.RevisionHistoryLimit == nil {
-		obj.Spec.RevisionHistoryLimit = utilpointer.Int32(10)
+		obj.Spec.RevisionHistoryLimit = utilpointer.To[int32](10)
 	}
 
 	if obj.Spec.WorkloadTemplate.StatefulSetTemplate != nil {

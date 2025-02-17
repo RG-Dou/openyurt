@@ -75,7 +75,7 @@ type ReconcileService struct {
 }
 
 // newReconciler returns a new reconcile.Reconciler
-func newReconciler(c *appconfig.CompletedConfig, mgr manager.Manager) reconcile.Reconciler {
+func newReconciler(_ *appconfig.CompletedConfig, mgr manager.Manager) reconcile.Reconciler {
 	return &ReconcileService{
 		Client:   yurtClient.GetClientByControllerNameOrDie(mgr, names.GatewayInternalServiceController),
 		scheme:   mgr.GetScheme(),
@@ -94,13 +94,13 @@ func add(mgr manager.Manager, cfg *appconfig.CompletedConfig, r reconcile.Reconc
 	}
 
 	// Watch for changes to Gateway
-	err = c.Watch(source.Kind(mgr.GetCache(), &ravenv1beta1.Gateway{}), &EnqueueRequestForGatewayEvent{})
+	err = c.Watch(source.Kind[client.Object](mgr.GetCache(), &ravenv1beta1.Gateway{}, &EnqueueRequestForGatewayEvent{}))
 	if err != nil {
 		return err
 	}
 
 	//Watch for changes to raven agent
-	err = c.Watch(source.Kind(mgr.GetCache(), &corev1.ConfigMap{}), &EnqueueRequestForConfigEvent{}, predicate.NewPredicateFuncs(
+	err = c.Watch(source.Kind[client.Object](mgr.GetCache(), &corev1.ConfigMap{}, &EnqueueRequestForConfigEvent{}, predicate.NewPredicateFuncs(
 		func(object client.Object) bool {
 			cm, ok := object.(*corev1.ConfigMap)
 			if !ok {
@@ -114,7 +114,7 @@ func add(mgr manager.Manager, cfg *appconfig.CompletedConfig, r reconcile.Reconc
 			}
 			return true
 		},
-	))
+	)))
 	if err != nil {
 		return err
 	}
@@ -138,13 +138,13 @@ func (r *ReconcileService) Reconcile(ctx context.Context, req reconcile.Request)
 
 	enableProxy, _ := util.CheckServer(ctx, r.Client)
 	if err = r.reconcileService(ctx, req, gwList, enableProxy); err != nil {
-		err = fmt.Errorf(Format("unable to reconcile service: %s", err))
+		err = fmt.Errorf("unable to reconcile service: %s", err)
 		klog.Errorln(err.Error())
 		return reconcile.Result{}, err
 	}
 
 	if err = r.reconcileEndpoint(ctx, req, gwList, enableProxy); err != nil {
-		err = fmt.Errorf(Format("unable to reconcile endpoint: %s", err))
+		err = fmt.Errorf("unable to reconcile endpoint: %s", err)
 		klog.Errorln(err.Error())
 		return reconcile.Result{}, err
 	}
@@ -154,7 +154,7 @@ func (r *ReconcileService) Reconcile(ctx context.Context, req reconcile.Request)
 func (r *ReconcileService) listExposedGateway(ctx context.Context) ([]*ravenv1beta1.Gateway, error) {
 	var gatewayList ravenv1beta1.GatewayList
 	if err := r.List(ctx, &gatewayList); err != nil {
-		return nil, fmt.Errorf(Format("unable to list gateways: %s", err))
+		return nil, fmt.Errorf("unable to list gateways: %s", err)
 	}
 	exposedGateways := make([]*ravenv1beta1.Gateway, 0)
 	for _, gw := range gatewayList.Items {

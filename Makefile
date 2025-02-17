@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-KUBERNETESVERSION ?=v1.28
+KUBERNETESVERSION ?=v1.30
 GOLANGCILINT_VERSION ?= v1.55.2
 GLOBAL_GOLANGCILINT := $(shell which golangci-lint)
 GOBIN := $(shell go env GOPATH)/bin
@@ -64,7 +64,7 @@ KUSTOMIZE_VERSION ?= v4.5.7
 ## Tool Binaries
 KUSTOMIZE ?= $(LOCALBIN)/kustomize
 
-KUBECTL_VERSION ?= v1.28.7
+KUBECTL_VERSION ?= v1.30.1
 KUBECTL ?= $(LOCALBIN)/kubectl
 
 YQ_VERSION := 4.13.2
@@ -226,10 +226,10 @@ newcontroller:
 CONTROLLER_GEN = $(shell pwd)/bin/controller-gen
 .PHONY: controller-gen
 controller-gen: ## Download controller-gen locally if necessary.
-ifeq ("$(shell $(CONTROLLER_GEN) --version 2> /dev/null)", "Version: v0.13.0")
+ifeq ("$(shell $(CONTROLLER_GEN) --version 2> /dev/null)", "Version: v0.16.5")
 else
 	rm -rf $(CONTROLLER_GEN)
-	$(call go-get-tool,$(CONTROLLER_GEN),sigs.k8s.io/controller-tools/cmd/controller-gen@v0.13.0)
+	$(call go-get-tool,$(CONTROLLER_GEN),sigs.k8s.io/controller-tools/cmd/controller-gen@v0.16.5)
 endif
 
 .PHONY: kubectl

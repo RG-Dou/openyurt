@@ -25,6 +25,7 @@ import (
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/event"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	ravenv1beta1 "github.com/openyurtio/openyurt/pkg/apis/raven/v1beta1"
 	"github.com/openyurtio/openyurt/pkg/yurtmanager/controller/raven/util"
@@ -32,7 +33,7 @@ import (
 
 type EnqueueRequestForGatewayEvent struct{}
 
-func (h *EnqueueRequestForGatewayEvent) Create(ctx context.Context, e event.CreateEvent, q workqueue.RateLimitingInterface) {
+func (h *EnqueueRequestForGatewayEvent) Create(ctx context.Context, e event.CreateEvent, q workqueue.TypedRateLimitingInterface[reconcile.Request]) {
 	gw, ok := e.Object.(*ravenv1beta1.Gateway)
 	if !ok {
 		klog.Error(Format("could not assert runtime Object %s/%s to v1beta1.Gateway,", e.Object.GetNamespace(), e.Object.GetName()))
@@ -41,11 +42,11 @@ func (h *EnqueueRequestForGatewayEvent) Create(ctx context.Context, e event.Crea
 	if gw.Spec.ExposeType != ravenv1beta1.ExposeTypeLoadBalancer {
 		return
 	}
-	klog.V(4).Infof(Format("enqueue gateway %s as create event", gw.GetName()))
+	klog.V(4).Info(Format("enqueue gateway %s as create event", gw.GetName()))
 	util.AddGatewayToWorkQueue(gw.GetName(), q)
 }
 
-func (h *EnqueueRequestForGatewayEvent) Update(ctx context.Context, e event.UpdateEvent, q workqueue.RateLimitingInterface) {
+func (h *EnqueueRequestForGatewayEvent) Update(ctx context.Context, e event.UpdateEvent, q workqueue.TypedRateLimitingInterface[reconcile.Request]) {
 	newGw, ok := e.ObjectNew.(*ravenv1beta1.Gateway)
 	if !ok {
 		klog.Error(Format("could not assert runtime Object %s/%s to v1beta1.Gateway,", e.ObjectNew.GetNamespace(), e.ObjectNew.GetName()))
@@ -57,12 +58,12 @@ func (h *EnqueueRequestForGatewayEvent) Update(ctx context.Context, e event.Upda
 		return
 	}
 	if needUpdate(newGw, oldGw) {
-		klog.V(4).Infof(Format("enqueue gateway %s as update event", newGw.GetName()))
+		klog.V(4).Info(Format("enqueue gateway %s as update event", newGw.GetName()))
 		util.AddGatewayToWorkQueue(newGw.GetName(), q)
 	}
 }
 
-func (h *EnqueueRequestForGatewayEvent) Delete(ctx context.Context, e event.DeleteEvent, q workqueue.RateLimitingInterface) {
+func (h *EnqueueRequestForGatewayEvent) Delete(ctx context.Context, e event.DeleteEvent, q workqueue.TypedRateLimitingInterface[reconcile.Request]) {
 	gw, ok := e.Object.(*ravenv1beta1.Gateway)
 	if !ok {
 		klog.Error(Format("could not assert runtime Object %s/%s to v1beta1.Gateway,", e.Object.GetNamespace(), e.Object.GetName()))
@@ -71,12 +72,11 @@ func (h *EnqueueRequestForGatewayEvent) Delete(ctx context.Context, e event.Dele
 	if gw.Spec.ExposeType != ravenv1beta1.ExposeTypeLoadBalancer {
 		return
 	}
-	klog.V(4).Infof(Format("enqueue gateway %s as delete event", gw.GetName()))
+	klog.V(4).Info(Format("enqueue gateway %s as delete event", gw.GetName()))
 	util.AddGatewayToWorkQueue(gw.GetName(), q)
 }
 
-func (h *EnqueueRequestForGatewayEvent) Generic(ctx context.Context, e event.GenericEvent, q workqueue.RateLimitingInterface) {
-	return
+func (h *EnqueueRequestForGatewayEvent) Generic(ctx context.Context, e event.GenericEvent, q workqueue.TypedRateLimitingInterface[reconcile.Request]) {
 }
 
 func needUpdate(newObj, oldObj *ravenv1beta1.Gateway) bool {
@@ -95,7 +95,7 @@ type EnqueueRequestForConfigEvent struct {
 	client client.Client
 }
 
-func (h *EnqueueRequestForConfigEvent) Create(ctx context.Context, e event.CreateEvent, q workqueue.RateLimitingInterface) {
+func (h *EnqueueRequestForConfigEvent) Create(ctx context.Context, e event.CreateEvent, q workqueue.TypedRateLimitingInterface[reconcile.Request]) {
 	cm, ok := e.Object.(*corev1.ConfigMap)
 	if !ok {
 		klog.Error(Format("could not assert runtime Object %s/%s to v1.Configmap,", e.Object.GetNamespace(), e.Object.GetName()))
@@ -114,7 +114,7 @@ func (h *EnqueueRequestForConfigEvent) Create(ctx context.Context, e event.Creat
 	}
 }
 
-func (h *EnqueueRequestForConfigEvent) Update(ctx context.Context, e event.UpdateEvent, q workqueue.RateLimitingInterface) {
+func (h *EnqueueRequestForConfigEvent) Update(ctx context.Context, e event.UpdateEvent, q workqueue.TypedRateLimitingInterface[reconcile.Request]) {
 	newCm, ok := e.ObjectNew.(*corev1.ConfigMap)
 	if !ok {
 		klog.Error(Format("could not assert runtime Object %s/%s to v1.Configmap,", e.ObjectNew.GetNamespace(), e.ObjectNew.GetName()))
@@ -139,15 +139,13 @@ func (h *EnqueueRequestForConfigEvent) Update(ctx context.Context, e event.Updat
 	}
 }
 
-func (h *EnqueueRequestForConfigEvent) Delete(ctx context.Context, e event.DeleteEvent, q workqueue.RateLimitingInterface) {
-	return
+func (h *EnqueueRequestForConfigEvent) Delete(ctx context.Context, e event.DeleteEvent, q workqueue.TypedRateLimitingInterface[reconcile.Request]) {
 }
 
-func (h *EnqueueRequestForConfigEvent) Generic(ctx context.Context, e event.GenericEvent, q workqueue.RateLimitingInterface) {
-	return
+func (h *EnqueueRequestForConfigEvent) Generic(ctx context.Context, e event.GenericEvent, q workqueue.TypedRateLimitingInterface[reconcile.Request]) {
 }
 
-func addExposedGateway(client client.Client, q workqueue.RateLimitingInterface) {
+func addExposedGateway(client client.Client, q workqueue.TypedRateLimitingInterface[reconcile.Request]) {
 	var gwList ravenv1beta1.GatewayList
 	err := client.List(context.TODO(), &gwList)
 	if err != nil {
@@ -155,7 +153,7 @@ func addExposedGateway(client client.Client, q workqueue.RateLimitingInterface) 
 	}
 	for _, gw := range gwList.Items {
 		if gw.Spec.ExposeType == ravenv1beta1.ExposeTypeLoadBalancer {
-			klog.V(4).Infof(Format("enqueue gateway %s", gw.GetName()))
+			klog.V(4).Info(Format("enqueue gateway %s", gw.GetName()))
 			util.AddGatewayToWorkQueue(gw.GetName(), q)
 		}
 	}

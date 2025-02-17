@@ -23,15 +23,17 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
 	v1 "k8s.io/api/core/v1"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	metav1beta1 "k8s.io/apimachinery/pkg/apis/meta/v1beta1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apiserver/pkg/endpoints/handlers/negotiation"
 	"k8s.io/apiserver/pkg/endpoints/handlers/responsewriters"
 	apirequest "k8s.io/apiserver/pkg/endpoints/request"
 	"k8s.io/klog/v2"
@@ -39,7 +41,6 @@ import (
 	"github.com/openyurtio/openyurt/pkg/projectinfo"
 	"github.com/openyurtio/openyurt/pkg/yurthub/kubernetes/serializer"
 	"github.com/openyurtio/openyurt/pkg/yurthub/metrics"
-	coordinatorconstants "github.com/openyurtio/openyurt/pkg/yurthub/yurtcoordinator/constants"
 )
 
 // ProxyKeyType represents the key in proxy request context
@@ -53,6 +54,8 @@ const (
 	WorkingModeCloud WorkingMode = "cloud"
 	// WorkingModeEdge represents yurthub is working in edge mode, which means yurthub is deployed on the edge side.
 	WorkingModeEdge WorkingMode = "edge"
+	// WorkingModeLocal represents yurthub is working in local mode, which means yurthub is deployed on the local side.
+	WorkingModeLocal WorkingMode = "local"
 
 	// ProxyReqContentType represents request content type context key
 	ProxyReqContentType ProxyKeyType = iota
@@ -60,24 +63,18 @@ const (
 	ProxyRespContentType
 	// ProxyClientComponent represents client component context key
 	ProxyClientComponent
-	// ProxyReqCanCache represents request can cache context key
-	ProxyReqCanCache
 	// ProxyListSelector represents label selector and filed selector string for list request
 	ProxyListSelector
-	// ProxyPoolScopedResource represents if this request is asking for pool-scoped resources
-	ProxyPoolScopedResource
-	// DefaultYurtCoordinatorEtcdSvcName represents default yurt coordinator etcd service
-	DefaultYurtCoordinatorEtcdSvcName = "yurt-coordinator-etcd"
-	// DefaultYurtCoordinatorAPIServerSvcName represents default yurt coordinator apiServer service
-	DefaultYurtCoordinatorAPIServerSvcName = "yurt-coordinator-apiserver"
-	// DefaultYurtCoordinatorEtcdSvcPort represents default yurt coordinator etcd port
-	DefaultYurtCoordinatorEtcdSvcPort = "2379"
-	// DefaultYurtCoordinatorAPIServerSvcPort represents default yurt coordinator apiServer port
-	DefaultYurtCoordinatorAPIServerSvcPort = "443"
+	// ProxyConvertGVK represents the gvk of response when it is a partial object metadata request
+	ProxyConvertGVK
+	// ProxyPoolScopeMetadata represents a request is going to list/watch pool scope metadata or not.
+	ProxyPoolScopeMetadata
 
 	YurtHubNamespace      = "kube-system"
 	CacheUserAgentsKey    = "cache_agents"
 	PoolScopeResourcesKey = "pool_scope_resources"
+
+	MultiplexerProxyClientUserAgentPrefix = "multiplexer-proxy-"
 
 	YurtHubProxyPort       = 10261
 	YurtHubPort            = 10267
@@ -85,7 +82,6 @@ const (
 )
 
 var (
-	DefaultCacheAgents   = []string{"kubelet", "kube-proxy", "flanneld", "coredns", "raven-agent-ds", projectinfo.GetAgentName(), projectinfo.GetHubName(), coordinatorconstants.DefaultPoolScopedUserAgent}
 	YurthubConfigMapName = fmt.Sprintf("%s-hub-cfg", strings.TrimRightFunc(projectinfo.GetProjectPrefix(), func(c rune) bool { return c == '-' }))
 )
 
@@ -127,15 +123,19 @@ func ClientComponentFrom(ctx context.Context) (string, bool) {
 	return info, ok
 }
 
-// WithReqCanCache returns a copy of parent in which the request can cache value is set
-func WithReqCanCache(parent context.Context, canCache bool) context.Context {
-	return WithValue(parent, ProxyReqCanCache, canCache)
-}
-
-// ReqCanCacheFrom returns the value of the request can cache key on the ctx
-func ReqCanCacheFrom(ctx context.Context) (bool, bool) {
-	info, ok := ctx.Value(ProxyReqCanCache).(bool)
-	return info, ok
+// TruncatedClientComponentFrom returns the value of the client component key without slash on the ctx.
+// only return the content before the first slash if user agent header includes slash.
+func TruncatedClientComponentFrom(ctx context.Context) (string, bool) {
+	comp, ok := ctx.Value(ProxyClientComponent).(string)
+	if ok {
+		if strings.Contains(comp, "/") {
+			index := strings.Index(comp, "/")
+			if index != -1 {
+				comp = comp[:index]
+			}
+		}
+	}
+	return comp, ok
 }
 
 // WithListSelector returns a copy of parent in which the list request selector string is set
@@ -149,16 +149,25 @@ func ListSelectorFrom(ctx context.Context) (string, bool) {
 	return info, ok
 }
 
-// WithIfPoolScopedResource returns a copy of parent in which IfPoolScopedResource is set,
-// indicating whether this request is asking for pool-scoped resources.
-func WithIfPoolScopedResource(parent context.Context, ifPoolScoped bool) context.Context {
-	return WithValue(parent, ProxyPoolScopedResource, ifPoolScoped)
+// WithConvertGVK returns a copy of parent in which the convert gvk value is set
+func WithConvertGVK(parent context.Context, gvk *schema.GroupVersionKind) context.Context {
+	return WithValue(parent, ProxyConvertGVK, gvk)
 }
 
-// IfPoolScopedResourceFrom returns the value of IfPoolScopedResource indicating whether this request
-// is asking for pool-scoped resource.
-func IfPoolScopedResourceFrom(ctx context.Context) (bool, bool) {
-	info, ok := ctx.Value(ProxyPoolScopedResource).(bool)
+// ConvertGVKFrom returns the value of the convert gvk key on the ctx
+func ConvertGVKFrom(ctx context.Context) (*schema.GroupVersionKind, bool) {
+	info, ok := ctx.Value(ProxyConvertGVK).(*schema.GroupVersionKind)
+	return info, ok
+}
+
+// WithIsRequestForPoolScopeMetadata returns a copy of parent in which request for pool scope metadata value is set
+func WithIsRequestForPoolScopeMetadata(parent context.Context, isRequestForPoolScopeMetadata bool) context.Context {
+	return WithValue(parent, ProxyPoolScopeMetadata, isRequestForPoolScopeMetadata)
+}
+
+// IsRequestForPoolScopeMetadataFrom returns the value of the request for pool scope metadata on the ctx
+func IsRequestForPoolScopeMetadataFrom(ctx context.Context) (bool, bool) {
+	info, ok := ctx.Value(ProxyPoolScopeMetadata).(bool)
 	return info, ok
 }
 
@@ -182,8 +191,8 @@ func ReqInfoString(info *apirequest.RequestInfo) string {
 	return fmt.Sprintf("%s %s for %s", info.Verb, info.Resource, info.Path)
 }
 
-// WriteObject write object to response writer
-func WriteObject(statusCode int, obj runtime.Object, w http.ResponseWriter, req *http.Request) error {
+// Err write err to response writer
+func Err(err error, w http.ResponseWriter, req *http.Request) {
 	ctx := req.Context()
 	if info, ok := apirequest.RequestInfoFrom(ctx); ok {
 		gv := schema.GroupVersion{
@@ -191,77 +200,59 @@ func WriteObject(statusCode int, obj runtime.Object, w http.ResponseWriter, req 
 			Version: info.APIVersion,
 		}
 		negotiatedSerializer := serializer.YurtHubSerializer.GetNegotiatedSerializer(gv.WithResource(info.Resource))
-		responsewriters.WriteObjectNegotiated(negotiatedSerializer, negotiation.DefaultEndpointRestrictions, gv, w, req, statusCode, obj, false)
+		responsewriters.ErrorNegotiated(err, negotiatedSerializer, gv, w, req)
+		return
+	}
+
+	klog.Errorf("request info is not found when err write, %s", ReqString(req))
+}
+
+// WriteObject write object to response writer
+func WriteObject(statusCode int, obj runtime.Object, w http.ResponseWriter, req *http.Request) error {
+	ctx := req.Context()
+	if info, ok := apirequest.RequestInfoFrom(ctx); ok {
+		gvr := schema.GroupVersionResource{
+			Group:    info.APIGroup,
+			Version:  info.APIVersion,
+			Resource: info.Resource,
+		}
+
+		convertGVK, ok := ConvertGVKFrom(ctx)
+		if ok && convertGVK != nil {
+			gvr, _ = meta.UnsafeGuessKindToResource(*convertGVK)
+		}
+
+		negotiatedSerializer := serializer.YurtHubSerializer.GetNegotiatedSerializer(gvr)
+		responsewriters.WriteObjectNegotiated(negotiatedSerializer, DefaultHubEndpointRestrictions, gvr.GroupVersion(), w, req, statusCode, obj, false)
 		return nil
 	}
 
 	return fmt.Errorf("request info is not found when write object, %s", ReqString(req))
 }
 
-func NewTripleReadCloser(req *http.Request, rc io.ReadCloser, isRespBody bool) (io.ReadCloser, io.ReadCloser, io.ReadCloser) {
-	pr1, pw1 := io.Pipe()
-	pr2, pw2 := io.Pipe()
-	tr := &tripleReadCloser{
-		rc:  rc,
-		pw1: pw1,
-		pw2: pw2,
+// DefaultHubEndpointRestrictions is the default EndpointRestrictions which allows
+// content-type negotiation to verify yurthub server support for specific options
+var DefaultHubEndpointRestrictions = hubEndpointRestrictions{}
+
+type hubEndpointRestrictions struct{}
+
+func (hubEndpointRestrictions) AllowsMediaTypeTransform(mimeType string, mimeSubType string, gvk *schema.GroupVersionKind) bool {
+	if gvk == nil {
+		return true
 	}
-	return tr, pr1, pr2
-}
 
-type tripleReadCloser struct {
-	rc  io.ReadCloser
-	pw1 *io.PipeWriter
-	pw2 *io.PipeWriter
-	// isRespBody shows rc(is.ReadCloser) is a response.Body
-	// or not(maybe a request.Body). if it is true(it's a response.Body),
-	// we should close the response body in Close func, else not,
-	// it(request body) will be closed by http request caller
-	isRespBody bool
-}
-
-// Read read data into p and write into pipe
-func (dr *tripleReadCloser) Read(p []byte) (n int, err error) {
-	n, err = dr.rc.Read(p)
-	if n > 0 {
-		var n1, n2 int
-		var err error
-		if n1, err = dr.pw1.Write(p[:n]); err != nil {
-			klog.Errorf("tripleReader: could not write to pw1 %v", err)
-			return n1, err
-		}
-		if n2, err = dr.pw2.Write(p[:n]); err != nil {
-			klog.Errorf("tripleReader: could not write to pw2 %v", err)
-			return n2, err
+	if gvk.GroupVersion() == metav1beta1.SchemeGroupVersion || gvk.GroupVersion() == metav1.SchemeGroupVersion {
+		switch gvk.Kind {
+		case "PartialObjectMetadata", "PartialObjectMetadataList":
+			return true
+		default:
+			return false
 		}
 	}
-
-	return
+	return false
 }
-
-// Close close two readers
-func (dr *tripleReadCloser) Close() error {
-	errs := make([]error, 0)
-	if dr.isRespBody {
-		if err := dr.rc.Close(); err != nil {
-			errs = append(errs, err)
-		}
-	}
-
-	if err := dr.pw1.Close(); err != nil {
-		errs = append(errs, err)
-	}
-
-	if err := dr.pw2.Close(); err != nil {
-		errs = append(errs, err)
-	}
-
-	if len(errs) != 0 {
-		return fmt.Errorf("could not close dualReader, %v", errs)
-	}
-
-	return nil
-}
+func (hubEndpointRestrictions) AllowsServerVersion(string) bool  { return false }
+func (hubEndpointRestrictions) AllowsStreamSchema(s string) bool { return s == "watch" }
 
 // NewDualReadCloser create an dualReadCloser object
 func NewDualReadCloser(req *http.Request, rc io.ReadCloser, isRespBody bool) (io.ReadCloser, io.ReadCloser) {
@@ -358,7 +349,7 @@ func IsSupportedLBMode(lbMode string) bool {
 // IsSupportedWorkingMode check working mode is supported or not
 func IsSupportedWorkingMode(workingMode WorkingMode) bool {
 	switch workingMode {
-	case WorkingModeCloud, WorkingModeEdge:
+	case WorkingModeCloud, WorkingModeEdge, WorkingModeLocal:
 		return true
 	}
 
@@ -516,4 +507,10 @@ func NodeConditionsHaveChanged(originalConditions []v1.NodeCondition, conditions
 		}
 	}
 	return false
+}
+
+// AttachConvertGVK is used for adding partialobjectmetadata information into comp, because the response of partial
+// object metadata request should be stored in a unique path for response is different with common requests.
+func AttachConvertGVK(comp string, convertGVK *schema.GroupVersionKind) string {
+	return filepath.Join(comp, strings.Join([]string{"partialobjectmetadatas", convertGVK.Version, convertGVK.Group}, "."))
 }

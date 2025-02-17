@@ -20,16 +20,18 @@ import (
 	"net/http"
 	"strconv"
 
-	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/dynamic/dynamicinformer"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/klog/v2"
 
 	yurtoptions "github.com/openyurtio/openyurt/cmd/yurthub/app/options"
+	"github.com/openyurtio/openyurt/pkg/yurthub/configuration"
 	"github.com/openyurtio/openyurt/pkg/yurthub/filter"
 	"github.com/openyurtio/openyurt/pkg/yurthub/filter/approver"
 	"github.com/openyurtio/openyurt/pkg/yurthub/filter/base"
 	"github.com/openyurtio/openyurt/pkg/yurthub/filter/initializer"
+	"github.com/openyurtio/openyurt/pkg/yurthub/filter/objectfilter"
 	"github.com/openyurtio/openyurt/pkg/yurthub/filter/responsefilter"
 	"github.com/openyurtio/openyurt/pkg/yurthub/kubernetes/serializer"
 	"github.com/openyurtio/openyurt/pkg/yurthub/util"
@@ -39,60 +41,77 @@ type Manager struct {
 	filter.Approver
 	nameToObjectFilter map[string]filter.ObjectFilter
 	serializerManager  *serializer.SerializerManager
+	resourceSyncers    []filter.ResourceSyncer
 }
 
 func NewFilterManager(options *yurtoptions.YurtHubOptions,
 	sharedFactory informers.SharedInformerFactory,
 	dynamicSharedFactory dynamicinformer.DynamicSharedInformerFactory,
 	proxiedClient kubernetes.Interface,
-	serializerManager *serializer.SerializerManager) (*Manager, error) {
-	if !options.EnableResourceFilter {
-		return nil, nil
+	serializerManager *serializer.SerializerManager,
+	configManager *configuration.Manager) (filter.FilterFinder, error) {
+	var err error
+	nameToFilters := make(map[string]filter.ObjectFilter)
+	if options.EnableResourceFilter {
+		// 1. new base filters
+		if options.WorkingMode == string(util.WorkingModeCloud) {
+			options.DisabledResourceFilters = append(options.DisabledResourceFilters, yurtoptions.DisabledInCloudMode...)
+		}
+		filters := base.NewFilters(options.DisabledResourceFilters)
+
+		// 2. register all filter factory
+		yurtoptions.RegisterAllFilters(filters)
+
+		// 3. prepare filter initializer chain
+		mutatedMasterServicePort := strconv.Itoa(options.YurtHubProxySecurePort)
+		mutatedMasterServiceHost := options.YurtHubProxyHost
+		if options.EnableDummyIf {
+			mutatedMasterServiceHost = options.HubAgentDummyIfIP
+		}
+		genericInitializer := initializer.New(sharedFactory, proxiedClient, options.NodeName, options.NodePoolName, mutatedMasterServiceHost, mutatedMasterServicePort)
+		nodesInitializer := initializer.NewNodesInitializer(options.EnableNodePool, options.EnablePoolServiceTopology, dynamicSharedFactory)
+		initializerChain := base.Initializers{}
+		initializerChain = append(initializerChain, genericInitializer, nodesInitializer)
+
+		// 4. initialize all object filters
+		nameToFilters, err = filters.NewFromFilters(initializerChain)
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	// 1. new base filters
-	if options.WorkingMode == string(util.WorkingModeCloud) {
-		options.DisabledResourceFilters = append(options.DisabledResourceFilters, yurtoptions.DisabledInCloudMode...)
-	}
-	filters := base.NewFilters(options.DisabledResourceFilters)
-
-	// 2. register all filter factory
-	yurtoptions.RegisterAllFilters(filters)
-
-	// 3. prepare filter initializer chain
-	mutatedMasterServicePort := strconv.Itoa(options.YurtHubProxySecurePort)
-	mutatedMasterServiceHost := options.YurtHubProxyHost
-	if options.EnableDummyIf {
-		mutatedMasterServiceHost = options.HubAgentDummyIfIP
-	}
-	genericInitializer := initializer.New(sharedFactory, proxiedClient, options.NodeName, options.NodePoolName, mutatedMasterServiceHost, mutatedMasterServicePort)
-	nodesInitializer := initializer.NewNodesInitializer(options.EnableNodePool, options.EnablePoolServiceTopology, dynamicSharedFactory)
-	initializerChain := base.Initializers{}
-	initializerChain = append(initializerChain, genericInitializer, nodesInitializer)
-
-	// 4. initialize all object filters
-	objFilters, err := filters.NewFromFilters(initializerChain)
-	if err != nil {
-		return nil, err
+	resourceSyncers := make([]filter.ResourceSyncer, 0)
+	for name, objFilter := range nameToFilters {
+		if resourceSyncer, ok := objFilter.(filter.ResourceSyncer); ok {
+			klog.Infof("filter %s need to sync resource before starting to work", name)
+			resourceSyncers = append(resourceSyncers, resourceSyncer)
+		}
 	}
 
 	// 5. new filter manager including approver and nameToObjectFilter
-	m := &Manager{
-		nameToObjectFilter: make(map[string]filter.ObjectFilter),
+	// if resource filters are disabled, nameToObjectFilter and resourceSyncers will be empty silces.
+	return &Manager{
+		Approver:           approver.NewApprover(options.NodeName, configManager),
+		nameToObjectFilter: nameToFilters,
 		serializerManager:  serializerManager,
-	}
+		resourceSyncers:    resourceSyncers,
+	}, nil
+}
 
-	filterSupportedResAndVerbs := make(map[string]map[string]sets.Set[string])
-	for i := range objFilters {
-		m.nameToObjectFilter[objFilters[i].Name()] = objFilters[i]
-		filterSupportedResAndVerbs[objFilters[i].Name()] = objFilters[i].SupportedResourceAndVerbs()
+func (m *Manager) HasSynced() bool {
+	for i := range m.resourceSyncers {
+		if !m.resourceSyncers[i].HasSynced() {
+			return false
+		}
 	}
-	m.Approver = approver.NewApprover(sharedFactory, filterSupportedResAndVerbs)
-
-	return m, nil
+	return true
 }
 
 func (m *Manager) FindResponseFilter(req *http.Request) (filter.ResponseFilter, bool) {
+	if len(m.nameToObjectFilter) == 0 {
+		return nil, false
+	}
+
 	approved, filterNames := m.Approver.Approve(req)
 	if approved {
 		objectFilters := make([]filter.ObjectFilter, 0)
@@ -110,4 +129,28 @@ func (m *Manager) FindResponseFilter(req *http.Request) (filter.ResponseFilter, 
 	}
 
 	return nil, false
+}
+
+func (m *Manager) FindObjectFilter(req *http.Request) (filter.ObjectFilter, bool) {
+	if len(m.nameToObjectFilter) == 0 {
+		return nil, false
+	}
+
+	approved, filterNames := m.Approver.Approve(req)
+	if !approved {
+		return nil, false
+	}
+
+	objectFilters := make([]filter.ObjectFilter, 0)
+	for i := range filterNames {
+		if objectFilter, ok := m.nameToObjectFilter[filterNames[i]]; ok {
+			objectFilters = append(objectFilters, objectFilter)
+		}
+	}
+
+	if len(objectFilters) == 0 {
+		return nil, false
+	}
+
+	return objectfilter.CreateFilterChain(objectFilters), true
 }

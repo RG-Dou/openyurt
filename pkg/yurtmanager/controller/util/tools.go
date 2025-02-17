@@ -23,11 +23,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/go-logr/logr"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/client-go/util/workqueue"
+	"k8s.io/klog/v2"
 	"k8s.io/utils/integer"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	controllerimpl "github.com/openyurtio/openyurt/pkg/yurtmanager/controller/internal/controller"
 )
@@ -76,7 +79,7 @@ func SlowStartBatch(count int, initialBatchSize int, fn func(index int) error) (
 	return successes, nil
 }
 
-func NewNoReconcileController(name string, mgr manager.Manager, options controller.Options) (*controllerimpl.Controller, error) {
+func NewNoReconcileController(name string, mgr manager.Manager, options controller.Options) (*controllerimpl.Controller[reconcile.Request], error) {
 	if len(name) == 0 {
 		return nil, fmt.Errorf("must specify Name for Controller")
 	}
@@ -86,17 +89,32 @@ func NewNoReconcileController(name string, mgr manager.Manager, options controll
 	}
 
 	if options.RateLimiter == nil {
-		options.RateLimiter = workqueue.DefaultControllerRateLimiter()
+		options.RateLimiter = workqueue.DefaultTypedControllerRateLimiter[reconcile.Request]()
 	}
 
+	log := mgr.GetLogger().WithValues(
+		"controller", name,
+	)
+
 	// Create controller with dependencies set
-	c := &controllerimpl.Controller{
-		MakeQueue: func() workqueue.RateLimitingInterface {
-			return workqueue.NewNamedRateLimitingQueue(options.RateLimiter, name)
+	c := &controllerimpl.Controller[reconcile.Request]{
+		NewQueue: func(controllerName string, rateLimiter workqueue.TypedRateLimiter[reconcile.Request]) workqueue.TypedRateLimitingInterface[reconcile.Request] {
+			return workqueue.NewTypedRateLimitingQueueWithConfig(rateLimiter, workqueue.TypedRateLimitingQueueConfig[reconcile.Request]{Name: controllerName})
 		},
 		CacheSyncTimeout: options.CacheSyncTimeout,
 		Name:             name,
+		RateLimiter:      options.RateLimiter,
 		RecoverPanic:     options.RecoverPanic,
+		LogConstructor: func(req *reconcile.Request) logr.Logger {
+			log := log
+			if req != nil {
+				log = log.WithValues(
+					"object", klog.KRef(req.Namespace, req.Name),
+					"namespace", req.Namespace, "name", req.Name,
+				)
+			}
+			return log
+		},
 	}
 
 	if err := mgr.Add(c); err != nil {

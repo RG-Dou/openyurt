@@ -79,7 +79,6 @@ type NodePoolStatus struct {
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 // +kubebuilder:subresource:status
 // +genclient:nonNamespaced
-// +kubebuilder:storageversion
 
 // NodePool is the Schema for the nodepools API
 type NodePool struct {

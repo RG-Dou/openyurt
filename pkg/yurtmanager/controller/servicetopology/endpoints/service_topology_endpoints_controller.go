@@ -76,9 +76,9 @@ func add(mgr manager.Manager, cfg *appconfig.CompletedConfig, r reconcile.Reconc
 	}
 
 	// Watch for changes to Service
-	if err := c.Watch(source.Kind(mgr.GetCache(), &corev1.Service{}), &EnqueueEndpointsForService{
+	if err := c.Watch(source.Kind[client.Object](mgr.GetCache(), &corev1.Service{}, &EnqueueEndpointsForService{
 		endpointsAdapter: r.(*ReconcileServicetopologyEndpoints).endpointsAdapter,
-	}); err != nil {
+	})); err != nil {
 		return err
 	}
 
@@ -94,7 +94,7 @@ func (r *ReconcileServicetopologyEndpoints) Reconcile(_ context.Context, request
 	// Note !!!!!!!!!!
 	// We strongly recommend use Format() to  encapsulation because Format() can print logs by module
 	// @kadisi
-	klog.Infof(Format("Reconcile Endpoints %s/%s", request.Namespace, request.Name))
+	klog.Info(Format("Reconcile Endpoints %s/%s", request.Namespace, request.Name))
 
 	// Fetch the Endpoints instance
 	instance := &corev1.Endpoints{}
@@ -107,7 +107,7 @@ func (r *ReconcileServicetopologyEndpoints) Reconcile(_ context.Context, request
 	}
 
 	if err := r.syncEndpoints(request.Namespace, request.Name); err != nil {
-		klog.Errorf(Format("sync endpoints %v failed with : %v", request.NamespacedName, err))
+		klog.Error(Format("sync endpoints %v failed with : %v", request.NamespacedName, err))
 		return reconcile.Result{Requeue: true}, err
 	}
 

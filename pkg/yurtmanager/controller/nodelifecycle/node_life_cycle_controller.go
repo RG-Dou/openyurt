@@ -215,7 +215,6 @@ type podUpdateItem struct {
 // ReconcileNodeLifeCycle is the controller that manages node's life cycle.
 type ReconcileNodeLifeCycle struct {
 	controllerRuntimeClient client.Client
-	taintManager            *scheduler.NoExecuteTaintManager
 	kubeClient              clientset.Interface
 
 	// This timestamp is to be used instead of LastProbeTime stored in Condition. We do this
@@ -283,8 +282,8 @@ type ReconcileNodeLifeCycle struct {
 	largeClusterThreshold       int32
 	unhealthyZoneThreshold      float32
 
-	nodeUpdateQueue workqueue.Interface
-	podUpdateQueue  workqueue.RateLimitingInterface
+	nodeUpdateQueue workqueue.TypedInterface[string]
+	podUpdateQueue  workqueue.TypedRateLimitingInterface[podUpdateItem]
 }
 
 // +kubebuilder:rbac:groups=core,resources=nodes/status,verbs=update
@@ -310,57 +309,24 @@ func Add(ctx context.Context, cfg *appconfig.CompletedConfig, mgr manager.Manage
 		CreateFunc: func(evt event.CreateEvent) bool {
 			pod := evt.Object.(*v1.Pod)
 			nc.podUpdated(nil, pod)
-			if nc.taintManager != nil {
-				nc.taintManager.PodUpdated(nil, pod)
-			}
 			return false
 		},
 		UpdateFunc: func(evt event.UpdateEvent) bool {
 			prevPod := evt.ObjectOld.(*v1.Pod)
 			newPod := evt.ObjectNew.(*v1.Pod)
 			nc.podUpdated(prevPod, newPod)
-			if nc.taintManager != nil {
-				nc.taintManager.PodUpdated(prevPod, newPod)
-			}
 			return false
 		},
 		DeleteFunc: func(evt event.DeleteEvent) bool {
 			pod := evt.Object.(*v1.Pod)
 			nc.podUpdated(pod, nil)
-			if nc.taintManager != nil {
-				nc.taintManager.PodUpdated(pod, nil)
-			}
 			return false
 		},
 		GenericFunc: func(evt event.GenericEvent) bool {
 			return false
 		},
 	}
-	c.Watch(source.Kind(mgr.GetCache(), &v1.Pod{}), &handler.Funcs{}, podsPredicate)
-
-	nc.taintManager = scheduler.NewNoExecuteTaintManager(nc.recorder, nc.controllerRuntimeClient, nc.getPodsAssignedToNode)
-	nodesTaintManagerPredicate := predicate.Funcs{
-		CreateFunc: func(evt event.CreateEvent) bool {
-			node := evt.Object.(*v1.Node).DeepCopy()
-			nc.taintManager.NodeUpdated(nil, node)
-			return false
-		},
-		UpdateFunc: func(evt event.UpdateEvent) bool {
-			oldNode := evt.ObjectOld.(*v1.Node).DeepCopy()
-			newNode := evt.ObjectNew.(*v1.Node).DeepCopy()
-			nc.taintManager.NodeUpdated(oldNode, newNode)
-			return false
-		},
-		DeleteFunc: func(evt event.DeleteEvent) bool {
-			node := evt.Object.(*v1.Node).DeepCopy()
-			nc.taintManager.NodeUpdated(node, nil)
-			return false
-		},
-		GenericFunc: func(evt event.GenericEvent) bool {
-			return false
-		},
-	}
-	c.Watch(source.Kind(mgr.GetCache(), &v1.Node{}), &handler.Funcs{}, nodesTaintManagerPredicate)
+	c.Watch(source.Kind[client.Object](mgr.GetCache(), &v1.Pod{}, &handler.Funcs{}, podsPredicate))
 
 	nodesUpdateQueuePredicate := predicate.Funcs{
 		CreateFunc: func(evt event.CreateEvent) bool {
@@ -382,9 +348,9 @@ func Add(ctx context.Context, cfg *appconfig.CompletedConfig, mgr manager.Manage
 			return false
 		},
 	}
-	c.Watch(source.Kind(mgr.GetCache(), &v1.Node{}), &handler.Funcs{}, nodesUpdateQueuePredicate)
-	c.Watch(source.Kind(mgr.GetCache(), &apps.DaemonSet{}), &handler.Funcs{})
-	c.Watch(source.Kind(mgr.GetCache(), &coordinationv1.Lease{}), &handler.Funcs{})
+	c.Watch(source.Kind[client.Object](mgr.GetCache(), &v1.Node{}, &handler.Funcs{}, nodesUpdateQueuePredicate))
+	c.Watch(source.Kind[client.Object](mgr.GetCache(), &apps.DaemonSet{}, &handler.Funcs{}))
+	c.Watch(source.Kind[client.Object](mgr.GetCache(), &coordinationv1.Lease{}, &handler.Funcs{}))
 
 	go nc.Run(ctx, c.WaitForStarted)
 	return nil
@@ -432,8 +398,12 @@ func newReconciler(cfg *appconfig.CompletedConfig, mgr manager.Manager) (*Reconc
 		secondaryEvictionLimiterQPS: cfg.ComponentConfig.NodeLifeCycleController.SecondaryNodeEvictionRate,
 		largeClusterThreshold:       cfg.ComponentConfig.NodeLifeCycleController.LargeClusterSizeThreshold,
 		unhealthyZoneThreshold:      cfg.ComponentConfig.NodeLifeCycleController.UnhealthyZoneThreshold,
-		nodeUpdateQueue:             workqueue.NewNamed("node_lifecycle_controller"),
-		podUpdateQueue:              workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "node_lifecycle_controller_pods"),
+		nodeUpdateQueue:             workqueue.NewTypedWithConfig(workqueue.TypedQueueConfig[string]{Name: "node_lifecycle_controller"}),
+		podUpdateQueue: workqueue.NewTypedRateLimitingQueueWithConfig(
+			workqueue.DefaultTypedControllerRateLimiter[podUpdateItem](),
+			workqueue.TypedRateLimitingQueueConfig[podUpdateItem]{
+				Name: "node_lifecycle_controller_pods",
+			}),
 	}
 	nc.getPodsAssignedToNode = GenGetPodsAssignedToNode(nc.controllerRuntimeClient)
 	nc.enterPartialDisruptionFunc = nc.ReducedQPSFunc
@@ -462,8 +432,6 @@ func (nc *ReconcileNodeLifeCycle) Run(ctx context.Context, waitForControllerStar
 	if !waitForControllerStarted(ctx) {
 		return
 	}
-
-	go nc.taintManager.Run(ctx)
 
 	// Start workers to reconcile labels and/or update NoSchedule taint for nodes.
 	for i := 0; i < scheduler.UpdateWorkerSize; i++ {
@@ -500,7 +468,7 @@ func (nc *ReconcileNodeLifeCycle) doNodeProcessingPassWorker(ctx context.Context
 		if shutdown {
 			return
 		}
-		nodeName := obj.(string)
+		nodeName := obj
 		if err := nc.doNoScheduleTaintingPass(ctx, nodeName); err != nil {
 			klog.ErrorS(err, "could not taint NoSchedule on node, requeue it", "node", klog.KRef("", nodeName))
 			// TODO(k82cn): Add nodeName back to the queue
@@ -1092,7 +1060,7 @@ func (nc *ReconcileNodeLifeCycle) doPodProcessingWorker(ctx context.Context) {
 			return
 		}
 
-		podItem := obj.(podUpdateItem)
+		podItem := obj
 		nc.processPod(ctx, podItem)
 	}
 }

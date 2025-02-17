@@ -29,29 +29,29 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	"github.com/openyurtio/openyurt/cmd/yurt-manager/names"
-	"github.com/openyurtio/openyurt/pkg/apis/apps/v1beta1"
+	"github.com/openyurtio/openyurt/pkg/apis/apps/v1beta2"
 	"github.com/openyurtio/openyurt/pkg/apis/network"
 	"github.com/openyurtio/openyurt/pkg/apis/network/v1alpha1"
 )
 
 func NewPoolServiceEventHandler() handler.EventHandler {
 	return handler.Funcs{
-		CreateFunc: func(ctx context.Context, event event.CreateEvent, limitingInterface workqueue.RateLimitingInterface) {
+		CreateFunc: func(ctx context.Context, event event.CreateEvent, limitingInterface workqueue.TypedRateLimitingInterface[reconcile.Request]) {
 			handlePoolServiceNormal(event.Object, limitingInterface)
 		},
-		UpdateFunc: func(ctx context.Context, updateEvent event.UpdateEvent, limitingInterface workqueue.RateLimitingInterface) {
+		UpdateFunc: func(ctx context.Context, updateEvent event.UpdateEvent, limitingInterface workqueue.TypedRateLimitingInterface[reconcile.Request]) {
 			handlePoolServiceUpdate(updateEvent.ObjectOld, updateEvent.ObjectNew, limitingInterface)
 		},
-		DeleteFunc: func(ctx context.Context, deleteEvent event.DeleteEvent, limitingInterface workqueue.RateLimitingInterface) {
+		DeleteFunc: func(ctx context.Context, deleteEvent event.DeleteEvent, limitingInterface workqueue.TypedRateLimitingInterface[reconcile.Request]) {
 			handlePoolServiceNormal(deleteEvent.Object, limitingInterface)
 		},
-		GenericFunc: func(ctx context.Context, genericEvent event.GenericEvent, limitingInterface workqueue.RateLimitingInterface) {
+		GenericFunc: func(ctx context.Context, genericEvent event.GenericEvent, limitingInterface workqueue.TypedRateLimitingInterface[reconcile.Request]) {
 			handlePoolServiceNormal(genericEvent.Object, limitingInterface)
 		},
 	}
 }
 
-func handlePoolServiceNormal(event client.Object, q workqueue.RateLimitingInterface) {
+func handlePoolServiceNormal(event client.Object, q workqueue.TypedRateLimitingInterface[reconcile.Request]) {
 	ps := event.(*v1alpha1.PoolService)
 	serviceName := getServiceNameFromPoolService(ps)
 	enqueueService(ps.Namespace, serviceName, q)
@@ -65,7 +65,7 @@ func getServiceNameFromPoolService(poolService *v1alpha1.PoolService) string {
 	return poolService.Labels[network.LabelServiceName]
 }
 
-func enqueueService(namespace, serviceName string, q workqueue.RateLimitingInterface) {
+func enqueueService(namespace, serviceName string, q workqueue.TypedRateLimitingInterface[reconcile.Request]) {
 	if len(serviceName) == 0 || len(namespace) == 0 {
 		return
 	}
@@ -75,7 +75,7 @@ func enqueueService(namespace, serviceName string, q workqueue.RateLimitingInter
 	})
 }
 
-func handlePoolServiceUpdate(oldObject, newObject client.Object, q workqueue.RateLimitingInterface) {
+func handlePoolServiceUpdate(oldObject, newObject client.Object, q workqueue.TypedRateLimitingInterface[reconcile.Request]) {
 	oldPs := oldObject.(*v1alpha1.PoolService)
 	newPs := newObject.(*v1alpha1.PoolService)
 
@@ -83,7 +83,13 @@ func handlePoolServiceUpdate(oldObject, newObject client.Object, q workqueue.Rat
 	newServiceName := getServiceNameFromPoolService(newPs)
 
 	if oldServiceName != newServiceName {
-		klog.Warningf("service name of %s/%s is changed from %s to %s", oldPs.Namespace, oldPs.Name, oldServiceName, newServiceName)
+		klog.Warningf(
+			"service name of %s/%s is changed from %s to %s",
+			oldPs.Namespace,
+			oldPs.Name,
+			oldServiceName,
+			newServiceName,
+		)
 		enqueueService(oldPs.Namespace, oldServiceName, q)
 		enqueueService(newPs.Namespace, newServiceName, q)
 		return
@@ -95,22 +101,22 @@ func handlePoolServiceUpdate(oldObject, newObject client.Object, q workqueue.Rat
 
 func NewNodePoolEventHandler(c client.Client) handler.EventHandler {
 	return handler.Funcs{
-		CreateFunc: func(ctx context.Context, createEvent event.CreateEvent, limitingInterface workqueue.RateLimitingInterface) {
+		CreateFunc: func(ctx context.Context, createEvent event.CreateEvent, limitingInterface workqueue.TypedRateLimitingInterface[reconcile.Request]) {
 			allLoadBalancerSetServicesEnqueue(c, limitingInterface)
 		},
-		UpdateFunc: func(ctx context.Context, updateEvent event.UpdateEvent, limitingInterface workqueue.RateLimitingInterface) {
+		UpdateFunc: func(ctx context.Context, updateEvent event.UpdateEvent, limitingInterface workqueue.TypedRateLimitingInterface[reconcile.Request]) {
 			allLoadBalancerSetServicesEnqueue(c, limitingInterface)
 		},
-		DeleteFunc: func(ctx context.Context, deleteEvent event.DeleteEvent, limitingInterface workqueue.RateLimitingInterface) {
+		DeleteFunc: func(ctx context.Context, deleteEvent event.DeleteEvent, limitingInterface workqueue.TypedRateLimitingInterface[reconcile.Request]) {
 			nodePoolRelatedServiceEnqueue(c, deleteEvent.Object, limitingInterface)
 		},
-		GenericFunc: func(ctx context.Context, genericEvent event.GenericEvent, limitingInterface workqueue.RateLimitingInterface) {
+		GenericFunc: func(ctx context.Context, genericEvent event.GenericEvent, limitingInterface workqueue.TypedRateLimitingInterface[reconcile.Request]) {
 			nodePoolRelatedServiceEnqueue(c, genericEvent.Object, limitingInterface)
 		},
 	}
 }
 
-func allLoadBalancerSetServicesEnqueue(c client.Client, q workqueue.RateLimitingInterface) {
+func allLoadBalancerSetServicesEnqueue(c client.Client, q workqueue.TypedRateLimitingInterface[reconcile.Request]) {
 	services := &v1.ServiceList{}
 	err := c.List(context.Background(), services)
 	if err != nil {
@@ -125,8 +131,8 @@ func allLoadBalancerSetServicesEnqueue(c client.Client, q workqueue.RateLimiting
 	}
 }
 
-func nodePoolRelatedServiceEnqueue(c client.Client, object client.Object, q workqueue.RateLimitingInterface) {
-	np := object.(*v1beta1.NodePool)
+func nodePoolRelatedServiceEnqueue(c client.Client, object client.Object, q workqueue.TypedRateLimitingInterface[reconcile.Request]) {
+	np := object.(*v1beta2.NodePool)
 	poolServiceList := &v1alpha1.PoolServiceList{}
 
 	listSelector := client.MatchingLabels{

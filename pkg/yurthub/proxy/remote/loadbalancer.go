@@ -24,7 +24,7 @@ import (
 	"net/http"
 	"net/url"
 	"sync"
-	"time"
+	"sync/atomic"
 
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	apirequest "k8s.io/apiserver/pkg/endpoints/request"
@@ -32,111 +32,149 @@ import (
 
 	yurtutil "github.com/openyurtio/openyurt/pkg/util"
 	"github.com/openyurtio/openyurt/pkg/yurthub/cachemanager"
-	"github.com/openyurtio/openyurt/pkg/yurthub/filter/manager"
+	"github.com/openyurtio/openyurt/pkg/yurthub/filter"
 	"github.com/openyurtio/openyurt/pkg/yurthub/healthchecker"
 	"github.com/openyurtio/openyurt/pkg/yurthub/proxy/util"
 	"github.com/openyurtio/openyurt/pkg/yurthub/transport"
 	hubutil "github.com/openyurtio/openyurt/pkg/yurthub/util"
-	"github.com/openyurtio/openyurt/pkg/yurthub/yurtcoordinator"
-	coordinatorconstants "github.com/openyurtio/openyurt/pkg/yurthub/yurtcoordinator/constants"
 )
 
-const (
-	watchCheckInterval = 5 * time.Second
-)
-
-type loadBalancerAlgo interface {
-	PickOne() *util.RemoteProxy
+// Backend defines the interface of proxy for a remote backend server.
+type Backend interface {
 	Name() string
+	RemoteServer() *url.URL
+	ServeHTTP(rw http.ResponseWriter, req *http.Request)
 }
 
-type rrLoadBalancerAlgo struct {
-	sync.Mutex
-	checker  healthchecker.MultipleBackendsHealthChecker
-	backends []*util.RemoteProxy
-	next     int
+// LoadBalancingStrategy defines the interface for different load balancing strategies.
+type LoadBalancingStrategy interface {
+	Name() string
+	PickOne() Backend
+	UpdateBackends(backends []Backend)
 }
 
-func (rr *rrLoadBalancerAlgo) Name() string {
-	return "rr algorithm"
+// BaseLoadBalancingStrategy provides common logic for load balancing strategies.
+type BaseLoadBalancingStrategy struct {
+	sync.RWMutex
+	checker  healthchecker.Interface
+	backends []Backend
 }
 
-func (rr *rrLoadBalancerAlgo) PickOne() *util.RemoteProxy {
+// UpdateBackends updates the list of backends in a thread-safe manner.
+func (b *BaseLoadBalancingStrategy) UpdateBackends(backends []Backend) {
+	b.Lock()
+	defer b.Unlock()
+	b.backends = backends
+}
+
+// checkAndReturnHealthyBackend checks if a backend is healthy before returning it.
+func (b *BaseLoadBalancingStrategy) checkAndReturnHealthyBackend(index int) Backend {
+	if len(b.backends) == 0 {
+		return nil
+	}
+
+	backend := b.backends[index]
+	if !yurtutil.IsNil(b.checker) && !b.checker.BackendIsHealthy(backend.RemoteServer()) {
+		return nil
+	}
+	return backend
+}
+
+// RoundRobinStrategy implements round-robin load balancing.
+type RoundRobinStrategy struct {
+	BaseLoadBalancingStrategy
+	next uint64
+}
+
+// Name returns the name of the strategy.
+func (rr *RoundRobinStrategy) Name() string {
+	return "round-robin"
+}
+
+// PickOne selects a backend using a round-robin approach.
+func (rr *RoundRobinStrategy) PickOne() Backend {
+	rr.RLock()
+	defer rr.RUnlock()
+
 	if len(rr.backends) == 0 {
 		return nil
-	} else if len(rr.backends) == 1 {
-		if rr.checker.BackendHealthyStatus(rr.backends[0].RemoteServer()) {
-			return rr.backends[0]
-		}
-		return nil
-	} else {
-		// round robin
-		rr.Lock()
-		defer rr.Unlock()
-		hasFound := false
-		selected := rr.next
-		for i := 0; i < len(rr.backends); i++ {
-			selected = (rr.next + i) % len(rr.backends)
-			if rr.checker.BackendHealthyStatus(rr.backends[selected].RemoteServer()) {
-				hasFound = true
+	}
+
+	totalBackends := len(rr.backends)
+	// Infinite loop to handle CAS failures and ensure fair selection under high concurrency.
+	for {
+		// load the current round-robin index.
+		startIndex := int(atomic.LoadUint64(&rr.next))
+		for i := 0; i < totalBackends; i++ {
+			index := (startIndex + i) % totalBackends
+			if backend := rr.checkAndReturnHealthyBackend(index); backend != nil {
+				// attempt to update next atomically using CAS(Compare-And-Swap)
+				// if another go routine has already updated next, CAS operation will fail.
+				// if successful, next is updated to index+1 to maintain round-robin fairness.
+				if atomic.CompareAndSwapUint64(&rr.next, uint64(startIndex), uint64(index+1)) {
+					return backend
+				}
+				// CAS operation failed, meaning another go routine modified next, so break to retry the selection process.
 				break
 			}
 		}
 
-		if hasFound {
-			rr.next = (selected + 1) % len(rr.backends)
-			return rr.backends[selected]
+		// if no healthy backend is found, exit the loop and return nil.
+		if !rr.hasHealthyBackend() {
+			return nil
+		}
+	}
+}
+
+// hasHealthyBackend checks if there is at least one healthy backend available.
+func (rr *RoundRobinStrategy) hasHealthyBackend() bool {
+	for i := range rr.backends {
+		if rr.checkAndReturnHealthyBackend(i) != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// PriorityStrategy implements priority-based load balancing.
+type PriorityStrategy struct {
+	BaseLoadBalancingStrategy
+}
+
+// Name returns the name of the strategy.
+func (prio *PriorityStrategy) Name() string {
+	return "priority"
+}
+
+// PickOne selects the first available healthy backend.
+func (prio *PriorityStrategy) PickOne() Backend {
+	prio.RLock()
+	defer prio.RUnlock()
+	for i := 0; i < len(prio.backends); i++ {
+		if backend := prio.checkAndReturnHealthyBackend(i); backend != nil {
+			return backend
 		}
 	}
 
 	return nil
 }
 
-type priorityLoadBalancerAlgo struct {
-	sync.Mutex
-	checker  healthchecker.MultipleBackendsHealthChecker
-	backends []*util.RemoteProxy
-}
-
-func (prio *priorityLoadBalancerAlgo) Name() string {
-	return "priority algorithm"
-}
-
-func (prio *priorityLoadBalancerAlgo) PickOne() *util.RemoteProxy {
-	if len(prio.backends) == 0 {
-		return nil
-	} else if len(prio.backends) == 1 {
-		if prio.checker.BackendHealthyStatus(prio.backends[0].RemoteServer()) {
-			return prio.backends[0]
-		}
-		return nil
-	} else {
-		prio.Lock()
-		defer prio.Unlock()
-		for i := 0; i < len(prio.backends); i++ {
-			if prio.checker.BackendHealthyStatus(prio.backends[i].RemoteServer()) {
-				return prio.backends[i]
-			}
-		}
-
-		return nil
-	}
-}
-
 // LoadBalancer is an interface for proxying http request to remote server
 // based on the load balance mode(round-robin or priority)
 type LoadBalancer interface {
 	ServeHTTP(rw http.ResponseWriter, req *http.Request)
+	UpdateBackends(remoteServers []*url.URL)
+	CurrentStrategy() LoadBalancingStrategy
 }
 
 type loadBalancer struct {
-	backends          []*util.RemoteProxy
-	algo              loadBalancerAlgo
-	localCacheMgr     cachemanager.CacheManager
-	filterManager     *manager.Manager
-	coordinatorGetter func() yurtcoordinator.Coordinator
-	workingMode       hubutil.WorkingMode
-	stopCh            <-chan struct{}
+	strategy      LoadBalancingStrategy
+	localCacheMgr cachemanager.CacheManager
+	filterFinder  filter.FilterFinder
+	transportMgr  transport.Interface
+	healthChecker healthchecker.Interface
+	mode          string
+	stopCh        <-chan struct{}
 }
 
 // NewLoadBalancer creates a loadbalancer for specified remote servers
@@ -145,98 +183,66 @@ func NewLoadBalancer(
 	remoteServers []*url.URL,
 	localCacheMgr cachemanager.CacheManager,
 	transportMgr transport.Interface,
-	coordinatorGetter func() yurtcoordinator.Coordinator,
-	healthChecker healthchecker.MultipleBackendsHealthChecker,
-	filterManager *manager.Manager,
-	workingMode hubutil.WorkingMode,
-	stopCh <-chan struct{}) (LoadBalancer, error) {
+	healthChecker healthchecker.Interface,
+	filterFinder filter.FilterFinder,
+	stopCh <-chan struct{}) LoadBalancer {
 	lb := &loadBalancer{
-		localCacheMgr:     localCacheMgr,
-		filterManager:     filterManager,
-		coordinatorGetter: coordinatorGetter,
-		workingMode:       workingMode,
-		stopCh:            stopCh,
-	}
-	backends := make([]*util.RemoteProxy, 0, len(remoteServers))
-	for i := range remoteServers {
-		b, err := util.NewRemoteProxy(remoteServers[i], lb.modifyResponse, lb.errorHandler, transportMgr, stopCh)
-		if err != nil {
-			klog.Errorf("could not new proxy backend(%s), %v", remoteServers[i].String(), err)
-			continue
-		}
-		backends = append(backends, b)
-	}
-	if len(backends) == 0 {
-		return nil, fmt.Errorf("no backends can be used by lb")
+		mode:          lbMode,
+		localCacheMgr: localCacheMgr,
+		filterFinder:  filterFinder,
+		transportMgr:  transportMgr,
+		healthChecker: healthChecker,
+		stopCh:        stopCh,
 	}
 
-	var algo loadBalancerAlgo
-	switch lbMode {
-	case "rr":
-		algo = &rrLoadBalancerAlgo{backends: backends, checker: healthChecker}
-	case "priority":
-		algo = &priorityLoadBalancerAlgo{backends: backends, checker: healthChecker}
-	default:
-		algo = &rrLoadBalancerAlgo{backends: backends, checker: healthChecker}
-	}
+	// initialize backends
+	lb.UpdateBackends(remoteServers)
 
-	lb.backends = backends
-	lb.algo = algo
-
-	return lb, nil
+	return lb
 }
 
+// UpdateBackends dynamically updates the list of remote servers.
+func (lb *loadBalancer) UpdateBackends(remoteServers []*url.URL) {
+	newBackends := make([]Backend, 0, len(remoteServers))
+	for _, server := range remoteServers {
+		proxy, err := util.NewRemoteProxy(server, lb.modifyResponse, lb.errorHandler, lb.transportMgr, lb.stopCh)
+		if err != nil {
+			klog.Errorf("could not create proxy for backend %s, %v", server.String(), err)
+			continue
+		}
+		newBackends = append(newBackends, proxy)
+	}
+
+	if lb.strategy == nil {
+		switch lb.mode {
+		case "priority":
+			lb.strategy = &PriorityStrategy{BaseLoadBalancingStrategy{checker: lb.healthChecker}}
+		default:
+			lb.strategy = &RoundRobinStrategy{BaseLoadBalancingStrategy{checker: lb.healthChecker}, 0}
+		}
+	}
+
+	lb.strategy.UpdateBackends(newBackends)
+}
+
+func (lb *loadBalancer) CurrentStrategy() LoadBalancingStrategy {
+	return lb.strategy
+}
+
+// ServeHTTP forwards the request to a backend.
 func (lb *loadBalancer) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
-	// pick a remote proxy based on the load balancing algorithm.
-	rp := lb.algo.PickOne()
+	rp := lb.strategy.PickOne()
 	if rp == nil {
-		// exceptional case
-		klog.Errorf("could not pick one healthy backends by %s for request %s", lb.algo.Name(), hubutil.ReqString(req))
-		http.Error(rw, "could not pick one healthy backends, try again to go through local proxy.", http.StatusInternalServerError)
+		klog.Errorf("no healthy backend avialbale for request %s", hubutil.ReqString(req))
+		http.Error(rw, "no healthy backends available.", http.StatusBadGateway)
 		return
 	}
-	klog.V(3).Infof("picked backend %s by %s for request %s", rp.Name(), lb.algo.Name(), hubutil.ReqString(req))
-
-	// If pool-scoped resource request is from leader-yurthub, it should always be sent to the cloud APIServer.
-	// Thus we do not need to start a check routine for it. But for other requests, we need to periodically check
-	// the yurt-coordinator status, and switch the traffic to yurt-coordinator if it is ready.
-	if util.IsPoolScopedResourceListWatchRequest(req) && !isRequestFromLeaderYurthub(req) {
-		// We get here possibly because the yurt-coordinator is not ready.
-		// We should cancel the watch request when yurt-coordinator becomes ready.
-		klog.Infof("yurt-coordinator is not ready, we use cloud APIServer to temporarily handle the req: %s", hubutil.ReqString(req))
-		clientReqCtx := req.Context()
-		cloudServeCtx, cloudServeCancel := context.WithCancel(clientReqCtx)
-
-		go func() {
-			t := time.NewTicker(watchCheckInterval)
-			defer t.Stop()
-			for {
-				select {
-				case <-t.C:
-					coordinator := lb.coordinatorGetter()
-					if coordinator == nil {
-						continue
-					}
-					if _, isReady := coordinator.IsReady(); isReady {
-						klog.Infof("notified the yurt coordinator is ready, cancel the req %s making it handled by yurt coordinator", hubutil.ReqString(req))
-						util.ReListWatchReq(rw, req)
-						cloudServeCancel()
-						return
-					}
-				case <-clientReqCtx.Done():
-					klog.Infof("watch req %s is canceled by client, when yurt coordinator is not ready", hubutil.ReqString(req))
-					return
-				}
-			}
-		}()
-
-		newReq := req.Clone(cloudServeCtx)
-		req = newReq
-	}
+	klog.V(3).Infof("forwarding request %s to backend %s", hubutil.ReqString(req), rp.Name())
 
 	rp.ServeHTTP(rw, req)
 }
 
+// errorHandler handles errors and tries to serve from local cache.
 func (lb *loadBalancer) errorHandler(rw http.ResponseWriter, req *http.Request, err error) {
 	klog.Errorf("remote proxy error handler: %s, %v", hubutil.ReqString(req), err)
 	if lb.localCacheMgr == nil || !lb.localCacheMgr.CanCacheFor(req) {
@@ -291,29 +297,27 @@ func (lb *loadBalancer) modifyResponse(resp *http.Response) error {
 		req = req.WithContext(ctx)
 
 		// filter response data
-		if lb.filterManager != nil {
-			if responseFilter, ok := lb.filterManager.FindResponseFilter(req); ok {
-				wrapBody, needUncompressed := hubutil.NewGZipReaderCloser(resp.Header, resp.Body, req, "filter")
-				size, filterRc, err := responseFilter.Filter(req, wrapBody, lb.stopCh)
-				if err != nil {
-					klog.Errorf("could not filter response for %s, %v", hubutil.ReqString(req), err)
-					return err
-				}
-				resp.Body = filterRc
-				if size > 0 {
-					resp.ContentLength = int64(size)
-					resp.Header.Set(yurtutil.HttpHeaderContentLength, fmt.Sprint(size))
-				}
+		if responseFilter, ok := lb.filterFinder.FindResponseFilter(req); ok {
+			wrapBody, needUncompressed := hubutil.NewGZipReaderCloser(resp.Header, resp.Body, req, "filter")
+			size, filterRc, err := responseFilter.Filter(req, wrapBody, lb.stopCh)
+			if err != nil {
+				klog.Errorf("could not filter response for %s, %v", hubutil.ReqString(req), err)
+				return err
+			}
+			resp.Body = filterRc
+			if size > 0 {
+				resp.ContentLength = int64(size)
+				resp.Header.Set(yurtutil.HttpHeaderContentLength, fmt.Sprint(size))
+			}
 
-				// after gunzip in filter, the header content encoding should be removed.
-				// because there's no need to gunzip response.body again.
-				if needUncompressed {
-					resp.Header.Del("Content-Encoding")
-				}
+			// after gunzip in filter, the header content encoding should be removed.
+			// because there's no need to gunzip response.body again.
+			if needUncompressed {
+				resp.Header.Del("Content-Encoding")
 			}
 		}
 
-		if lb.workingMode == hubutil.WorkingModeEdge {
+		if !yurtutil.IsNil(lb.localCacheMgr) {
 			// cache resp with storage interface
 			lb.cacheResponse(req, resp)
 		}
@@ -337,7 +341,6 @@ func (lb *loadBalancer) modifyResponse(resp *http.Response) error {
 
 func (lb *loadBalancer) cacheResponse(req *http.Request, resp *http.Response) {
 	if lb.localCacheMgr.CanCacheFor(req) {
-		ctx := req.Context()
 		wrapPrc, needUncompressed := hubutil.NewGZipReaderCloser(resp.Header, resp.Body, req, "cache-manager")
 		// after gunzip in filter, the header content encoding should be removed.
 		// because there's no need to gunzip response.body again.
@@ -346,115 +349,13 @@ func (lb *loadBalancer) cacheResponse(req *http.Request, resp *http.Response) {
 		}
 		resp.Body = wrapPrc
 
-		var poolCacheManager cachemanager.CacheManager
-		var isHealthy bool
-
-		coordinator := lb.coordinatorGetter()
-		if coordinator == nil {
-			isHealthy = false
-		} else {
-			poolCacheManager, isHealthy = coordinator.IsHealthy()
-		}
-
-		if isHealthy && poolCacheManager != nil {
-			if !isLeaderHubUserAgent(ctx) {
-				if isRequestOfNodeAndPod(ctx) {
-					// Currently, for request that does not come from "leader-yurthub",
-					// we only cache pod and node resources to yurt-coordinator.
-					// Note: We do not allow the non-leader yurthub to cache pool-scoped resources
-					// into yurt-coordinator to ensure that only one yurthub can update pool-scoped
-					// cache to avoid inconsistency of data.
-					lb.cacheToLocalAndPool(req, resp, poolCacheManager)
-				} else {
-					lb.cacheToLocal(req, resp)
-				}
-			} else {
-				if isPoolScopedCtx(ctx) {
-					// Leader Yurthub will always list/watch all resources, which contain may resource this
-					// node does not need.
-					lb.cacheToPool(req, resp, poolCacheManager)
-				} else {
-					klog.Errorf("could not cache response for request %s, leader yurthub does not cache non-poolscoped resources.", hubutil.ReqString(req))
-				}
-			}
-			return
-		}
-
-		// When yurt-coordinator is not healthy or not be enabled, we can
-		// only cache the response at local.
-		lb.cacheToLocal(req, resp)
-	}
-}
-
-func (lb *loadBalancer) cacheToLocal(req *http.Request, resp *http.Response) {
-	ctx := req.Context()
-	req = req.WithContext(ctx)
-	rc, prc := hubutil.NewDualReadCloser(req, resp.Body, true)
-	go func(req *http.Request, prc io.ReadCloser, stopCh <-chan struct{}) {
-		if err := lb.localCacheMgr.CacheResponse(req, prc, stopCh); err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, context.Canceled) {
-			klog.Errorf("lb could not cache req %s in local cache, %v", hubutil.ReqString(req), err)
-		}
-	}(req, prc, ctx.Done())
-	resp.Body = rc
-}
-
-func (lb *loadBalancer) cacheToPool(req *http.Request, resp *http.Response, poolCacheManager cachemanager.CacheManager) {
-	ctx := req.Context()
-	req = req.WithContext(ctx)
-	rc, prc := hubutil.NewDualReadCloser(req, resp.Body, true)
-	go func(req *http.Request, prc io.ReadCloser, stopCh <-chan struct{}) {
-		if err := poolCacheManager.CacheResponse(req, prc, stopCh); err != nil {
-			klog.Errorf("lb could not cache req %s in pool cache, %v", hubutil.ReqString(req), err)
-		}
-	}(req, prc, ctx.Done())
-	resp.Body = rc
-}
-
-func (lb *loadBalancer) cacheToLocalAndPool(req *http.Request, resp *http.Response, poolCacheMgr cachemanager.CacheManager) {
-	ctx := req.Context()
-	req = req.WithContext(ctx)
-	rc, prc1, prc2 := hubutil.NewTripleReadCloser(req, resp.Body, true)
-	go func(req *http.Request, prc io.ReadCloser, stopCh <-chan struct{}) {
-		if err := lb.localCacheMgr.CacheResponse(req, prc, stopCh); err != nil {
-			klog.Errorf("lb could not cache req %s in local cache, %v", hubutil.ReqString(req), err)
-		}
-	}(req, prc1, ctx.Done())
-
-	if poolCacheMgr != nil {
+		// cache the response at local.
+		rc, prc := hubutil.NewDualReadCloser(req, resp.Body, true)
 		go func(req *http.Request, prc io.ReadCloser, stopCh <-chan struct{}) {
-			if err := poolCacheMgr.CacheResponse(req, prc, stopCh); err != nil {
-				klog.Errorf("lb could not cache req %s in pool cache, %v", hubutil.ReqString(req), err)
+			if err := lb.localCacheMgr.CacheResponse(req, prc, stopCh); err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, context.Canceled) {
+				klog.Errorf("lb could not cache req %s in local cache, %v", hubutil.ReqString(req), err)
 			}
-		}(req, prc2, ctx.Done())
+		}(req, prc, req.Context().Done())
+		resp.Body = rc
 	}
-	resp.Body = rc
-}
-
-func isLeaderHubUserAgent(reqCtx context.Context) bool {
-	comp, hasComp := hubutil.ClientComponentFrom(reqCtx)
-	return hasComp && comp == coordinatorconstants.DefaultPoolScopedUserAgent
-}
-
-func isPoolScopedCtx(reqCtx context.Context) bool {
-	poolScoped, hasPoolScoped := hubutil.IfPoolScopedResourceFrom(reqCtx)
-	return hasPoolScoped && poolScoped
-}
-
-func isRequestOfNodeAndPod(reqCtx context.Context) bool {
-	reqInfo, ok := apirequest.RequestInfoFrom(reqCtx)
-	if !ok {
-		return false
-	}
-
-	return (reqInfo.Resource == "nodes" && reqInfo.APIGroup == "" && reqInfo.APIVersion == "v1") ||
-		(reqInfo.Resource == "pods" && reqInfo.APIGroup == "" && reqInfo.APIVersion == "v1")
-}
-
-func isRequestFromLeaderYurthub(req *http.Request) bool {
-	ctx := req.Context()
-	agent, ok := hubutil.ClientComponentFrom(ctx)
-	if !ok {
-		return false
-	}
-	return agent == coordinatorconstants.DefaultPoolScopedUserAgent
 }

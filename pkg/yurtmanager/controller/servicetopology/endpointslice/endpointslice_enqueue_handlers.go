@@ -37,21 +37,21 @@ type EnqueueEndpointsliceForService struct {
 
 // Create implements EventHandler
 func (e *EnqueueEndpointsliceForService) Create(ctx context.Context, evt event.CreateEvent,
-	q workqueue.RateLimitingInterface) {
+	q workqueue.TypedRateLimitingInterface[reconcile.Request]) {
 }
 
 // Update implements EventHandler
 func (e *EnqueueEndpointsliceForService) Update(ctx context.Context, evt event.UpdateEvent,
-	q workqueue.RateLimitingInterface) {
+	q workqueue.TypedRateLimitingInterface[reconcile.Request]) {
 	oldSvc, ok := evt.ObjectOld.(*corev1.Service)
 	if !ok {
-		klog.Errorf(Format("could not assert runtime Object(%s) to v1.Service",
+		klog.Error(Format("could not assert runtime Object(%s) to v1.Service",
 			evt.ObjectOld.GetName()))
 		return
 	}
 	newSvc, ok := evt.ObjectNew.(*corev1.Service)
 	if !ok {
-		klog.Errorf(Format("could not assert runtime Object(%s) to v1.Service",
+		klog.Error(Format("could not assert runtime Object(%s) to v1.Service",
 			evt.ObjectNew.GetName()))
 		return
 	}
@@ -62,17 +62,17 @@ func (e *EnqueueEndpointsliceForService) Update(ctx context.Context, evt event.U
 
 // Delete implements EventHandler
 func (e *EnqueueEndpointsliceForService) Delete(ctx context.Context, evt event.DeleteEvent,
-	q workqueue.RateLimitingInterface) {
+	q workqueue.TypedRateLimitingInterface[reconcile.Request]) {
 }
 
 // Generic implements EventHandler
 func (e *EnqueueEndpointsliceForService) Generic(ctx context.Context, evt event.GenericEvent,
-	q workqueue.RateLimitingInterface) {
+	q workqueue.TypedRateLimitingInterface[reconcile.Request]) {
 }
 
-func (e *EnqueueEndpointsliceForService) enqueueEndpointsliceForSvc(newSvc *corev1.Service, q workqueue.RateLimitingInterface) {
+func (e *EnqueueEndpointsliceForService) enqueueEndpointsliceForSvc(newSvc *corev1.Service, q workqueue.TypedRateLimitingInterface[reconcile.Request]) {
 	keys := e.endpointsliceAdapter.GetEnqueueKeysBySvc(newSvc)
-	klog.Infof(Format("the topology configuration of svc %s/%s is changed, enqueue endpointslices: %v", newSvc.Namespace, newSvc.Name, keys))
+	klog.Info(Format("the topology configuration of svc %s/%s is changed, enqueue endpointslices: %v", newSvc.Namespace, newSvc.Name, keys))
 	for _, key := range keys {
 		ns, name, err := cache.SplitMetaNamespaceKey(key)
 		if err != nil {

@@ -23,13 +23,14 @@ import (
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/event"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	"github.com/openyurtio/openyurt/pkg/yurtmanager/controller/raven/util"
 )
 
 type EnqueueRequestForServiceEvent struct{}
 
-func (h *EnqueueRequestForServiceEvent) Create(ctx context.Context, e event.CreateEvent, q workqueue.RateLimitingInterface) {
+func (h *EnqueueRequestForServiceEvent) Create(ctx context.Context, e event.CreateEvent, q workqueue.TypedRateLimitingInterface[reconcile.Request]) {
 	svc, ok := e.Object.(*corev1.Service)
 	if !ok {
 		klog.Error(Format("could not assert runtime Object to v1.Service"))
@@ -40,11 +41,11 @@ func (h *EnqueueRequestForServiceEvent) Create(ctx context.Context, e event.Crea
 		return
 	}
 
-	klog.V(4).Infof(Format("enqueue configmap %s/%s due to service create event", util.WorkingNamespace, util.RavenProxyNodesConfig))
+	klog.V(4).Info(Format("enqueue configmap %s/%s due to service create event", util.WorkingNamespace, util.RavenProxyNodesConfig))
 	util.AddDNSConfigmapToWorkQueue(q)
 }
 
-func (h *EnqueueRequestForServiceEvent) Update(ctx context.Context, e event.UpdateEvent, q workqueue.RateLimitingInterface) {
+func (h *EnqueueRequestForServiceEvent) Update(ctx context.Context, e event.UpdateEvent, q workqueue.TypedRateLimitingInterface[reconcile.Request]) {
 	newSvc, ok := e.ObjectNew.(*corev1.Service)
 	if !ok {
 		klog.Error(Format("could not assert runtime Object to v1.Service"))
@@ -56,52 +57,48 @@ func (h *EnqueueRequestForServiceEvent) Update(ctx context.Context, e event.Upda
 		return
 	}
 	if newSvc.Spec.ClusterIP != oldSvc.Spec.ClusterIP {
-		klog.V(4).Infof(Format("enqueue configmap %s/%s due to service update event", util.WorkingNamespace, util.RavenProxyNodesConfig))
+		klog.V(4).Info(Format("enqueue configmap %s/%s due to service update event", util.WorkingNamespace, util.RavenProxyNodesConfig))
 		util.AddDNSConfigmapToWorkQueue(q)
 	}
 }
 
-func (h *EnqueueRequestForServiceEvent) Delete(ctx context.Context, e event.DeleteEvent, q workqueue.RateLimitingInterface) {
+func (h *EnqueueRequestForServiceEvent) Delete(ctx context.Context, e event.DeleteEvent, q workqueue.TypedRateLimitingInterface[reconcile.Request]) {
 	_, ok := e.Object.(*corev1.Service)
 	if !ok {
 		klog.Error(Format("could not assert runtime Object to v1.Service"))
 		return
 	}
-	klog.V(4).Infof(Format("enqueue configmap %s/%s due to service update event", util.WorkingNamespace, util.RavenProxyNodesConfig))
+	klog.V(4).Info(Format("enqueue configmap %s/%s due to service update event", util.WorkingNamespace, util.RavenProxyNodesConfig))
 	util.AddDNSConfigmapToWorkQueue(q)
-	return
 }
 
-func (h *EnqueueRequestForServiceEvent) Generic(ctx context.Context, e event.GenericEvent, q workqueue.RateLimitingInterface) {
-	return
+func (h *EnqueueRequestForServiceEvent) Generic(ctx context.Context, e event.GenericEvent, q workqueue.TypedRateLimitingInterface[reconcile.Request]) {
 }
 
 type EnqueueRequestForNodeEvent struct{}
 
-func (h *EnqueueRequestForNodeEvent) Create(ctx context.Context, e event.CreateEvent, q workqueue.RateLimitingInterface) {
+func (h *EnqueueRequestForNodeEvent) Create(ctx context.Context, e event.CreateEvent, q workqueue.TypedRateLimitingInterface[reconcile.Request]) {
 	_, ok := e.Object.(*corev1.Node)
 	if !ok {
 		klog.Error(Format("could not assert runtime Object to v1.Node"))
 		return
 	}
-	klog.V(4).Infof(Format("enqueue configmap %s/%s due to node create event", util.WorkingNamespace, util.RavenProxyNodesConfig))
+	klog.V(4).Info(Format("enqueue configmap %s/%s due to node create event", util.WorkingNamespace, util.RavenProxyNodesConfig))
 	util.AddDNSConfigmapToWorkQueue(q)
 }
 
-func (h *EnqueueRequestForNodeEvent) Update(ctx context.Context, e event.UpdateEvent, q workqueue.RateLimitingInterface) {
-	return
+func (h *EnqueueRequestForNodeEvent) Update(ctx context.Context, e event.UpdateEvent, q workqueue.TypedRateLimitingInterface[reconcile.Request]) {
 }
 
-func (h *EnqueueRequestForNodeEvent) Delete(ctx context.Context, e event.DeleteEvent, q workqueue.RateLimitingInterface) {
+func (h *EnqueueRequestForNodeEvent) Delete(ctx context.Context, e event.DeleteEvent, q workqueue.TypedRateLimitingInterface[reconcile.Request]) {
 	_, ok := e.Object.(*corev1.Node)
 	if !ok {
 		klog.Error(Format("could not assert runtime Object to v1.Node"))
 		return
 	}
-	klog.V(4).Infof(Format("enqueue configmap %s/%s due to node delete event", util.WorkingNamespace, util.RavenProxyNodesConfig))
+	klog.V(4).Info(Format("enqueue configmap %s/%s due to node delete event", util.WorkingNamespace, util.RavenProxyNodesConfig))
 	util.AddDNSConfigmapToWorkQueue(q)
 }
 
-func (h *EnqueueRequestForNodeEvent) Generic(ctx context.Context, e event.GenericEvent, q workqueue.RateLimitingInterface) {
-
+func (h *EnqueueRequestForNodeEvent) Generic(ctx context.Context, e event.GenericEvent, q workqueue.TypedRateLimitingInterface[reconcile.Request]) {
 }

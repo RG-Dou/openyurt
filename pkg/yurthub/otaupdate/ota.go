@@ -28,11 +28,13 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
 
+	yurtutil "github.com/openyurtio/openyurt/pkg/util"
 	"github.com/openyurtio/openyurt/pkg/yurthub/cachemanager"
-	"github.com/openyurtio/openyurt/pkg/yurthub/kubernetes/rest"
+	"github.com/openyurtio/openyurt/pkg/yurthub/healthchecker"
 	upgrade "github.com/openyurtio/openyurt/pkg/yurthub/otaupdate/upgrader"
 	"github.com/openyurtio/openyurt/pkg/yurthub/otaupdate/util"
 	"github.com/openyurtio/openyurt/pkg/yurthub/storage"
+	"github.com/openyurtio/openyurt/pkg/yurthub/transport"
 	"github.com/openyurtio/openyurt/pkg/yurtmanager/controller/daemonpodupdater"
 )
 
@@ -175,22 +177,23 @@ func preCheck(clientset kubernetes.Interface, namespace, podName, nodeName strin
 }
 
 // HealthyCheck checks if cloud-edge is disconnected before ota update handle, ota update is not allowed when disconnected
-func HealthyCheck(rest *rest.RestConfigManager, nodeName string, handler OTAHandler) http.Handler {
+func HealthyCheck(healthChecker healthchecker.Interface, clientManager transport.Interface, nodeName string, handler OTAHandler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		restCfg := rest.GetRestConfig(true)
-		if restCfg == nil {
-			klog.Infof("Get pod list is not allowed when edge is disconnected to cloud")
-			util.WriteErr(w, "OTA update is not allowed when edge is disconnected to cloud", http.StatusForbidden)
+		var kubeClient kubernetes.Interface
+		if yurtutil.IsNil(healthChecker) {
+			// cloud mode: no health checker is prepared
+			kubeClient = clientManager.GetDirectClientsetAtRandom()
+		} else if u := healthChecker.PickOneHealthyBackend(); u != nil {
+			// edge mode, get a kube client for healthy cloud kube-apiserver
+			kubeClient = clientManager.GetDirectClientset(u)
+		}
+
+		if kubeClient != nil {
+			handler(kubeClient, nodeName).ServeHTTP(w, r)
 			return
 		}
 
-		clientSet, err := kubernetes.NewForConfig(restCfg)
-		if err != nil {
-			klog.Errorf("Get client set failed: %v", err)
-			util.WriteErr(w, "Get client set failed", http.StatusInternalServerError)
-			return
-		}
-
-		handler(clientSet, nodeName).ServeHTTP(w, r)
+		klog.Infof("OTA upgrade is not allowed when node(%s) is disconnected to cloud", nodeName)
+		util.WriteErr(w, "OTA upgrade is not allowed when node is disconnected to cloud", http.StatusServiceUnavailable)
 	})
 }
