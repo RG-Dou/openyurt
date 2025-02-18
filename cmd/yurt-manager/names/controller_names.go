@@ -24,7 +24,6 @@ const (
 	ServiceTopologyEndpointsController     = "service-topology-endpoints-controller"
 	ServiceTopologyEndpointSliceController = "service-topology-endpointslice-controller"
 	YurtAppSetController                   = "yurt-app-set-controller"
-	YurtAppDaemonController                = "yurt-app-daemon-controller"
 	YurtStaticSetController                = "yurt-static-set-controller"
 	DelegateLeaseController                = "delegate-lease-controller"
 	PodBindingController                   = "pod-binding-controller"
@@ -37,6 +36,7 @@ const (
 	LoadBalancerSetController              = "load-balancer-set-controller"
 	HubLeaderController                    = "hubleader-controller"
 	HubLeaderConfigController              = "hubleaderconfig-controller"
+	HubLeaderRBACController                = "hubleaderrbac-controller"
 )
 
 func YurtManagerControllerAliases() map[string]string {
@@ -49,7 +49,6 @@ func YurtManagerControllerAliases() map[string]string {
 		"servicetopologyendpoints":      ServiceTopologyEndpointsController,
 		"servicetopologyendpointslices": ServiceTopologyEndpointSliceController,
 		"yurtappset":                    YurtAppSetController,
-		"yurtappdaemon":                 YurtAppDaemonController,
 		"yurtstaticset":                 YurtStaticSetController,
 		"delegatelease":                 DelegateLeaseController,
 		"podbinding":                    PodBindingController,
@@ -62,5 +61,6 @@ func YurtManagerControllerAliases() map[string]string {
 		"loadbalancerset":               LoadBalancerSetController,
 		"hubleader":                     HubLeaderController,
 		"hubleaderconfig":               HubLeaderConfigController,
+		"hubleaderrbac":                 HubLeaderRBACController,
 	}
 }
